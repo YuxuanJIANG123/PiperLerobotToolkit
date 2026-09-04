@@ -49,9 +49,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# uv/poetry lock files
+# Poetry lock file
 poetry.lock
-uv.lock
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -114,7 +113,6 @@ profile_default/
 ipython_config.py
 
 # pyenv
-.python-version
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow
 __pypackages__/
@@ -129,6 +127,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv.*
+.uv-cache/
 env/
 venv/
 env.bak/

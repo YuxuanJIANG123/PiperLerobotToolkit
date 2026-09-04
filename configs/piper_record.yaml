@@ -1,0 +1,39 @@
+robot:
+  type: piper
+  inference_time: false
+  can_name: can0
+  # false = program exits/errors while the servo remains enabled and holds pose.
+  # Never set true unless the arm is physically supported against gravity.
+  disable_on_disconnect: false
+  joint_step_rad: 0.003
+  gripper_step_m: 0.0002
+  max_relative_target_rad: 0.006
+  motion_speed: 15
+  cameras:
+    wrist:
+      type: intelrealsense
+      serial_number: 346122071508
+      fps: 30
+      width: 640
+      height: 480
+    third_person:
+      type: intelrealsense
+      serial_number: 405622074798
+      fps: 30
+      width: 640
+      height: 480
+
+control:
+  type: record
+  fps: 30
+  repo_id: local/piper_pick
+  root: data/piper_pick
+  single_task: Pick up the object and place it in the container
+  num_episodes: 20
+  warmup_time_s: 5
+  episode_time_s: 60
+  reset_time_s: 10
+  video: true
+  push_to_hub: false
+  display_cameras: true
+  play_sounds: false

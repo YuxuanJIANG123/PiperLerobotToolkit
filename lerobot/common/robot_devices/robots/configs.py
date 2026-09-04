@@ -13,7 +13,7 @@ from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
     MotorsBusConfig,
-    PiperMotorsBusConfig
+    PiperMotorsBusConfig,
 )
 
 
@@ -603,8 +603,16 @@ class LeKiwiRobotConfig(RobotConfig):
 @RobotConfig.register_subclass("piper")
 @dataclass
 class PiperRobotConfig(RobotConfig):
-    inference_time: bool
-    
+    inference_time: bool = False
+    can_name: str = "can0"
+    # Keep servo torque after the process exits. Disabling a gravity-loaded Piper
+    # can make the arm fall; only enable this when the arm is physically supported.
+    disable_on_disconnect: bool = False
+    joint_step_rad: float = 0.003
+    gripper_step_m: float = 0.0002
+    max_relative_target_rad: float = 0.01
+    motion_speed: int = 20
+
     follower_arm: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": PiperMotorsBusConfig(
@@ -623,26 +631,14 @@ class PiperRobotConfig(RobotConfig):
         }
     )
 
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-            # "one": OpenCVCameraConfig(
-            #     camera_index=0,
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            # ),
-            # "two": OpenCVCameraConfig(
-            #     camera_index=2,
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            # ),
-            "one": IntelRealSenseCameraConfig(
-                name="Intel RealSense D435I",
-                fps=30,
-                width=640,
-                height=480,
-                rotation=None,
-            ),
-        }
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not self.can_name:
+            raise ValueError("can_name must not be empty")
+        if self.joint_step_rad <= 0 or self.gripper_step_m <= 0:
+            raise ValueError("Keyboard step sizes must be positive")
+        if self.max_relative_target_rad <= 0:
+            raise ValueError("max_relative_target_rad must be positive")
+        if not 1 <= self.motion_speed <= 100:
+            raise ValueError("motion_speed must be in [1, 100]")

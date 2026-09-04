@@ -1,165 +1,124 @@
-# 项目演示
+# PiperLerobotToolkit
 
-https://github.com/user-attachments/assets/79fe22a5-0589-43c9-9faa-3b553aafdcb0
+AgileX Piper 单臂工具仓库：用键盘进行低速关节遥操作，同时录制腕部和第三视角两台
+Intel RealSense D435i，并保存为与 OpenPI π0.5 官方加载器兼容的 LeRobot Dataset v2.1。
 
-if the video is empty, see this link: https://github.com/lykycy123/lerobot-piper/blob/main/W3_manipulator.mp4
+> 真机首次运行必须保持急停可达并清空周围空间。本项目尚未在你的机械臂上验收，请先核对
+> 关节方向、零位和限位。
 
-# 项目硬件
-使用PIPER松灵机械臂  
-使用realsense摄像头，可以自定义个数  
-使用手柄控制
-# Install
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+## 数据定义
+
+- `observation.state`：六关节（rad）及夹爪开度（m），共 7 维 float32。
+- `action`：实际下发的同单位 7 维位置目标。
+- `observation.images.wrist`：腕部 D435i RGB。
+- `observation.images.third_person`：第三视角 D435i RGB。
+- Dataset `codebase_version`：`v2.1`。
+
+目标由最新编码器反馈加一个小增量产生；松开按键即保持当前位置，不会跳回零位。每帧还会
+执行相对位移限制和 Piper 软件绝对限位。
+
+默认 `disable_on_disconnect: false`：正常退出或保存异常时，Piper 保持使能并维持当前位置，
+避免失能后受重力下坠。只有机械臂已被物理支撑时，才可改成 `true`。退出程序不等于急停，
+需要彻底断能时请按 Piper 官方安全流程操作。
+
+## 安装与硬件
+
+项目通过 `.python-version` 固定 Python 3.10，由 uv 创建和维护仓库内的 `.venv`：
+
 ```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
+# 首次使用若尚未安装 uv：curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.10
+uv sync --extra piper
+
+# 视频编码和 CAN 工具属于系统依赖
+sudo apt update
+sudo apt install ffmpeg can-utils ethtool
+sudo bash piper_scripts/can_activate.sh can0 1000000
+ip -details link show can0
 ```
 
-Install 🤗 LeRobot:
-```bash
-pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+以后无需手动激活环境，直接使用 `uv run`。如有需要也可以执行 `source .venv/bin/activate`。
 
-pip uninstall numpy
-pip install numpy==1.26.0
-pip install pynput
+识别两个 D435i 的序列号：
+
+```bash
+uv run python lerobot/common/robot_devices/cameras/intelrealsense.py \
+  --images-dir outputs/realsense-identification
 ```
 
-/!\ For Linux only, ffmpeg and opencv requires conda install for now. Run this exact sequence of commands:
+两台相机名称相同，必须用 `serial_number` 区分。尽量接到不同 USB 3.x 控制器。
+
+## 键盘遥操作
+
+`Q/A`、`W/S`、`E/D`、`R/F`、`T/G`、`Y/H` 分别控制 J1 到 J6 正反向；
+`O/L` 打开/关闭夹爪。松开即保持，`Ctrl+C` 退出。
+
 ```bash
-conda install -c conda-forge ffmpeg
-pip uninstall opencv-python
-conda install "opencv>=4.10.0"
+uv run python lerobot/scripts/control_robot.py \
+  --robot.type=piper --robot.inference_time=false \
+  --robot.can_name=can0 --robot.cameras='{}' \
+  --robot.joint_step_rad=0.003 --robot.gripper_step_m=0.0002 \
+  --robot.max_relative_target_rad=0.006 --robot.motion_speed=15 \
+  --control.type=teleoperate --control.fps=30
 ```
 
-Install Piper:  
+键盘直接从当前 POSIX 终端读取，不依赖 `pynput`、X11 或 Wayland。stdin 必须是交互式 TTY；
+不要通过管道或重定向启动控制程序。按住按键时依靠系统键盘自动重复连续移动。
+
+## 双 D435i 录制
+
+双相机嵌套配置放在 `configs/piper_record.yaml`，其中已经写入当前实测序列号：
+
 ```bash
-pip install python-can
-pip install piper_sdk
-sudo apt update && sudo apt install can-utils ethtool
-pip install pygame
+uv run python lerobot/scripts/control_robot.py \
+  --config_path configs/piper_record.yaml
 ```
 
-# piper集成lerobot
-见lerobot_piper_tutorial/1. 🤗 LeRobot：新增机械臂的一般流程.pdf  
-注意在使用的时候可能会出现ImportError: /lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.29' not found (required by /home/lyk/.conda/envs/lerobot/lib/python3.10/site-packages/cv2.cpython-310-x86_64-linux-gnu.so)的问题
+旧版 `draccus` 不会把 CLI 中的 `--robot.cameras="{...}"` 字符串解码成相机配置。请在 YAML
+中修改相机序列号。任务和 episode 数等简单字段仍可在命令后覆盖：
+
 ```bash
-conda install -c conda-forge libstdcxx-ng  # 安装或更新  
-
-# 激活 Conda 环境后，设置 LD_LIBRARY_PATH  
-conda activate lerobot  
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH  
-# 激活can
-cd piper_scripts/
-bash can_activate.sh can0 1000000
-
-# 验证是否生效  
-echo $LD_LIBRARY_PATH  # 应包含 Conda 环境的 lib 目录
-
+uv run python lerobot/scripts/control_robot.py \
+  --config_path configs/piper_record.yaml \
+  --control.single_task="Pick up the red cube" \
+  --control.num_episodes=10
 ```
 
+录制时右方向键结束当前 episode，左方向键废弃并重录，`Esc` 保存已有 episode 并结束。
+episode 之间的 reset 阶段仍可用同一套键盘按键重新摆放机械臂，同时手动恢复场景。
 
+视频默认使用 FFmpeg 的 `libx264` 编码器。可用 `ffmpeg -encoders | grep libx264` 检查。
 
-# Teleoperate
 ```bash
-python lerobot/scripts/control_robot.py \
-    --robot.type=piper \
-    --robot.inference_time=false \
-    --control.type=teleoperate
+uv run python scripts/verify_dataset_v21.py data/piper_pick
+uv run python lerobot/scripts/visualize_dataset.py \
+  --repo-id local/piper_pick --root data/piper_pick --episode-index 0
 ```
 
+## OpenPI π0.5
 
+Piper 的 OpenPI `DataConfig` 通常映射：
 
-# Record 
-**注意所有的single_task名字不能重复，num_episodes是一个任务记录多少条数据，episode_time是一条数据的记录时间** \
-Set dataset root path
-```bash
-HF_USER=$PWD/data
-echo $HF_USER
+```text
+images.wrist      <- observation.images.wrist
+images.base_0_rgb <- observation.images.third_person
+state             <- observation.state
+actions           <- action
+prompt            <- task
 ```
 
+Dataset v2.1 兼容不代表 ALOHA/LIBERO transform 能直接用于 Piper；还需声明 Piper 的 7 维动作
+和相机键。首次运行建议 `motion_speed=10~15`、`joint_step_rad=0.001~0.003`。软件限位不能
+替代固件保护和实体急停。退出时本项目保持反馈姿态后失能，不主动回零。
+
+本项目基于 Hugging Face LeRobot 和社区 Piper 集成，采用 Apache-2.0 许可证。
+
+## 开发与测试
+
 ```bash
-python lerobot/scripts/control_robot.py \
-    --robot.type=piper \
-    --robot.inference_time=false \
-    --control.type=record \
-    --control.fps=30 \
-    --control.single_task="move" \
-    --control.repo_id=${HF_USER}/test \
-    --control.num_episodes=2 \
-    --control.warmup_time_s=2 \
-    --control.episode_time_s=10 \
-    --control.reset_time_s=10 \
-    --control.play_sounds=true \
-    --control.push_to_hub=false
+uv sync --extra piper --extra test --extra dev
+uv run pytest -q tests/test_piper_keyboard.py
 ```
 
-Press right arrow -> at any time during episode recording to early stop and go to resetting. Same during resetting, to early stop and to go to the next episode recording.  
-Press left arrow <- at any time during episode recording or resetting to early stop, cancel the current episode, and re-record it.  
-Press escape ESC at any time during episode recording to end the session early and go straight to video encoding and dataset uploading.  
-
-# visualize
-```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id ${HF_USER}/test \
-    --episode-index 0
-```
-
-# Replay
-```bash
-python lerobot/scripts/control_robot.py \
-    --robot.type=piper \
-    --robot.inference_time=false \
-    --control.type=replay \
-    --control.fps=30 \
-    --control.repo_id=${HF_USER}/test \
-    --control.episode=0
-```
-
-# Caution
-
-1. In lerobots/common/datasets/video_utils, the vcodec is set to **libopenh264**, please find your vcodec by **ffmpeg -codecs**
-
-
-# Train
-具体的训练流程见lerobot_piper_tutorial/2. 🤗 AutoDL训练.pdf
-```bash
-python lerobot/scripts/train.py \
-  --dataset.repo_id=${HF_USER}/jack \
-  --policy.type=act \
-  --output_dir=outputs/train/act_jack \
-  --job_name=act_jack \
-  --device=cuda \
-  --wandb.enable=true
-``` 
-
-
-# Inference
-
-**注意在推理前需要包含训练好的模型**，注意，如果直接使用可能会出现缺少type字段的问题，在训练好的模型中，修改pretrained_model中config.json文件，在开头加上"type" : "act",
-
-2025/6/13更新：新训练的模型，checkpoints配置文件中可能需要删除use_amp和device，如果报错raise ParsingError(f"Couldn't instantiate class {stringify_type(cls)} using the given arguments.") from e
-draccus.utils.ParsingError: Couldn't instantiate class RecordControlConfig using the given arguments，则加上--control.device=cuda
-
-HF_USER=$PWD/inference_real
-
-还是使用control_robot.py中的record loop，配置 **--robot.inference_time=true** 可以将手柄移出。
-```bash
-python lerobot/scripts/control_robot.py \
-    --robot.type=piper \
-    --robot.inference_time=true \
-    --control.type=record \
-    --control.fps=30 \
-    --control.single_task="move" \
-    --control.repo_id=$USER/eval_act_jack \
-    --control.num_episodes=1 \
-    --control.warmup_time_s=2 \
-    --control.episode_time_s=30 \
-    --control.reset_time_s=10 \
-    --control.push_to_hub=false \
-    --control.policy.path=outputs/train/act_koch_pick_place_lego/checkpoints/latest/pretrained_model
-```
-
-**上述方法需要注意每次使用的命令行控制中control.single_task这部分名字不能重复，不方便经常使用，所以下述方法使用python代码控制,也方便集成和二次开发**
-```bash
-python lerobot/scripts/control_robot.py 
-```
+依赖变化后运行 `uv lock` 更新锁文件。其他机器可执行
+`uv sync --frozen --extra piper`，严格复现 `uv.lock` 环境。

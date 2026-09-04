@@ -63,8 +63,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
             if key in robot.logs:
                 log_dt(f"dtR{name}", robot.logs[key])
 
-    info_str = " ".join(log_items)
-    #logging.info(info_str)
+    logging.info(" ".join(log_items))
 
 
 @cache
@@ -76,9 +75,8 @@ def is_headless():
         return False
     except Exception:
         print(
-            "Error trying to import pynput. Switching to headless mode. "
-            "As a result, the video stream from the cameras won't be shown, "
-            "and you won't be able to change the control flow with keyboards. "
+            "Graphical display backend is unavailable. Switching camera previews off. "
+            "Terminal keyboard control remains available. "
             "For more info, see traceback below.\n"
         )
         traceback.print_exc()
@@ -122,34 +120,30 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
-        return listener, events
+    from lerobot.common.robot_devices.teleop.terminal_keyboard import TerminalKeyboardListener
 
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
-
-    def on_press(key):
+    def on_key(key):
         try:
-            if key == keyboard.Key.right:
+            if key == "right":
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
-            elif key == keyboard.Key.left:
+            elif key == "left":
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
-            elif key == keyboard.Key.esc:
+            elif key == "esc":
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
         except Exception as e:
             print(f"Error handling key press: {e}")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+    listener = TerminalKeyboardListener(on_key)
+    try:
+        listener.start()
+    except RuntimeError as exc:
+        logging.warning("Recording hotkeys disabled: %s", exc)
+        listener = None
 
     return listener, events
 
@@ -292,12 +286,11 @@ def reset_environment(robot, events, reset_time_s, fps):
 def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
-    if not is_headless():
-        if listener is not None:
-            listener.stop()
+    if listener is not None:
+        listener.stop()
 
-        if display_cameras:
-            cv2.destroyAllWindows()
+    if not is_headless() and display_cameras:
+        cv2.destroyAllWindows()
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
