@@ -1,0 +1,21 @@
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: false
+  # Queried from this follower on 2026-10-06; radians. This does not reset hardware zeros.
+  joint_limits_rad:
+    - [-2.6179938779914944, 2.6179938779914944]  # J1: -150.0 to 150.0 deg
+    - [0.0, 3.141592653589793]  # J2: 0.0 to 180.0 deg
+    - [-2.9670597283903604, 0.0]  # J3: -170.0 to 0.0 deg
+    - [-1.5533430342749532, 1.5533430342749532]  # J4: -89.0 to 89.0 deg
+    - [-1.5533430342749532, 1.5533430342749532]  # J5: -89.0 to 89.0 deg
+    - [-2.9670597283903604, 2.9670597283903604]  # J6: -170.0 to 170.0 deg
+  cameras: {}
+teleop:
+  type: piper_x_leader
+  id: piper_x_leader
+  can_name: piper_leader
+  source: control
+fps: 30
+display_data: false

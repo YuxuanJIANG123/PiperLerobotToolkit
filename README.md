@@ -1,5 +1,26 @@
 # PiperLerobotToolkit
 
+## Piper-H → Piper-X leader/follower integration (LeRobot v3)
+
+The current Python 3.12 integration is in [`piper_h_x/`](piper_h_x/README.md).
+It includes verified follower movement with planned joint control, leader-silence
+pause/resume, two-camera recording, timestamped dataset folders, diagnostics, and tests.
+H-to-X physical-pose retargeting remains unimplemented; see its README for limitations.
+
+```bash
+cd piper_h_x
+bash scripts/setup.sh
+source .venv/bin/activate
+```
+
+Use the [teleoperation and recording commands](piper_h_x/README.md#teleoperate)
+from that directory. It has its own Python environment and records Dataset v3.0.
+The older Python 3.10 / Dataset v2.1 keyboard toolkit below remains separate;
+do not mix their environments or assume dataset-loader compatibility.
+
+---
+
+
 AgileX Piper 单臂工具仓库：用键盘进行低速关节遥操作，同时录制腕部和第三视角两台
 Intel RealSense D435i，并保存为与 OpenPI π0.5 官方加载器兼容的 LeRobot Dataset v2.1。
 

@@ -1,0 +1,43 @@
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: false
+  # Queried from this follower on 2026-10-06; radians. This does not reset hardware zeros.
+  joint_limits_rad:
+    - [-2.6179938779914944, 2.6179938779914944]  # J1: -150.0 to 150.0 deg
+    - [0.0, 3.141592653589793]  # J2: 0.0 to 180.0 deg
+    - [-2.9670597283903604, 0.0]  # J3: -170.0 to 0.0 deg
+    - [-1.5533430342749532, 1.5533430342749532]  # J4: -89.0 to 89.0 deg
+    - [-1.5533430342749532, 1.5533430342749532]  # J5: -89.0 to 89.0 deg
+    - [-2.9670597283903604, 2.9670597283903604]  # J6: -170.0 to 170.0 deg
+  cameras:
+    wrist:
+      type: intelrealsense
+      serial_number_or_name: '346122071508'
+      width: 640
+      height: 480
+      fps: 30
+    third_person:
+      type: intelrealsense
+      serial_number_or_name: '405622074798'
+      width: 640
+      height: 480
+      fps: 30
+teleop:
+  type: piper_x_leader
+  id: piper_x_leader
+  can_name: piper_leader
+  source: control
+dataset:
+  repo_id: local/piper_x_pick
+  no_stamp: false  # Timestamp the dataset ID and folder for each new recording.
+  root: data/piper_x_pick
+  single_task: Pick up the object and place it in the container
+  fps: 30
+  num_episodes: 10
+  episode_time_s: 30
+  reset_time_s: 10
+  push_to_hub: false
+display_data: false
+play_sounds: false
