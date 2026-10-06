@@ -9,12 +9,16 @@ for filename, variable in (("lerobot_teleoperate.py", "raw_action"), ("lerobot_r
     anchor = f"                {variable} = teleop.get_action()\n"
     replacement = (
         '                if robot.name == "piper_x" and teleop.name == "piper_x_leader":\n'
-        f"                    {variable} = teleop.get_action_for_observation(obs)\n"
+        f"                    {variable} = teleop.get_action_for_observation(obs, follower_config=robot.config)\n"
         "                else:\n"
         f"                    {variable} = teleop.get_action()\n"
     )
+    previous = replacement.replace("obs, follower_config=robot.config", "obs")
     if replacement in source:
         print(f"Pause hook already applied: {filename}")
+    elif source.count(previous) == 1:
+        path.write_text(source.replace(previous, replacement))
+        print(f"Updated observation hook with follower limits: {filename}")
     elif source.count(anchor) == 1:
         path.write_text(source.replace(anchor, replacement))
         print(f"Applied pause hook: {filename}")

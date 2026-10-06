@@ -1,0 +1,81 @@
+# Experimental relative TCP control. Read README before live use.
+# Zero TCP offsets refer to link6, not fingertips. Verify transforms first.
+# Track relative position and orientation; rotations use the verified base alignment.
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: false
+  joint_limits_rad:
+  - - -2.6179938779914944
+    - 2.6179938779914944
+  - - 0.0
+    - 3.141592653589793
+  - - -2.9670597283903604
+    - 0.0
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -2.9670597283903604
+    - 2.9670597283903604
+  cameras:
+    wrist:
+      type: intelrealsense
+      serial_number_or_name: '346122071508'
+      width: 640
+      height: 480
+      fps: 30
+    third_person:
+      type: intelrealsense
+      serial_number_or_name: '405622074798'
+      width: 640
+      height: 480
+      fps: 30
+  high_follow: false
+  motion_speed: 10
+  max_joint_step_rad: 0.003
+teleop:
+  type: piper_x_leader
+  id: piper_x_leader
+  can_name: piper_leader
+  source: control
+  control_mode: end_effector
+  eef:
+    frames_verified: false
+    translation_scale: 0.5
+    track_orientation: true
+    leader_to_follower_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    leader_tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.0
+    follower_tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.0
+    leader_tcp_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    follower_tcp_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    max_translation_m: 0.1
+    max_rotation_rad: 0.7
+dataset:
+  repo_id: local/piper_x_eef_pick
+  no_stamp: false
+  root: data/piper_x_eef_pick
+  single_task: Pick up the object and place it in the container
+  fps: 30
+  num_episodes: 10
+  episode_time_s: 30
+  reset_time_s: 10
+  push_to_hub: false
+display_data: false
+play_sounds: false

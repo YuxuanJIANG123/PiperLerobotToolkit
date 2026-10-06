@@ -2,16 +2,17 @@
 
 This workspace connects a user-identified Piper-H teaching leader to a Piper-X
 follower through LeRobot's robot and teleoperator interfaces. **Follower motion has
-been confirmed by the user and recorded joint feedback.** The current adapter
-copies joint angles directly; matching the two arms' physical poses or gripper
-trajectories has not been validated. H-to-X kinematic retargeting is not implemented.
+been confirmed by the user and recorded joint feedback.** Joint mode copies joint angles directly. Optional relative end-effector mode now
+maps Piper-H TCP motion to Piper-X joint targets using separate pinned models.
+The new mapping is tested in software but has not been validated on the physical
+arms; base alignment, tool frames, and joint conventions must be checked first.
 
 ## Setup
 
 Run commands from this project directory:
 
 ```bash
-cd /path/to/PiperLerobotToolkit/piper_h_x
+cd /path/to/PiperLerobotToolkit
 bash scripts/setup.sh                    # First installation or reinstall
 source .venv/bin/activate                # Every new terminal
 ```
@@ -36,6 +37,7 @@ and aim the third-person camera at the manipulation workspace before recording.
 
 | Change | Current behavior / implementation |
 | --- | --- |
+| Relative end-effector mode | Added model-based H→X FK/IK, relative anchors, translation scaling, optional orientation tracking, bounded IK, and a receive-only preview. Hardware frame verification remains required. |
 | Follower control mode | `high_follow=false` is now the default: planned position/velocity joint control. This setting produced observed movement; the earlier `true` setting did not produce the expected following in the user's initial test. |
 | Leader silence | Teleoperation and recording pause at the follower's measured pose after target freshness expires, rather than crashing or continuing toward a stale leader target. All four leader target frames must refresh before resuming. |
 | Strict fault handling | CAN transport errors and stale follower feedback still stop the operation. Silence cannot distinguish a stationary leader from an unplugged one; both pause following. |
@@ -136,6 +138,204 @@ The first six logged numbers are degrees; the seventh is gripper millimetres.
 age of the relevant feedback. During a pause, the field labelled `leader` contains
 the latched follower hold target, not a new leader measurement.
 
+## Relative end-effector teleoperation (experimental)
+
+This mode uses the official Piper-H and Piper-X URDFs at revision
+`f6642ce0d7872c686f29c99e9e10cd23d1d49313`. Model sources and the MIT license are
+bundled in `src/lerobot_robot_piper_x/models/`; no runtime downloads are required.
+The numerical solver uses NumPy; no SciPy, ROS, or external IK service is needed.
+
+At the first observation, the mapper records both TCP poses and gripper openings.
+There is no initial jump to the leader's absolute pose. With base rotation `A`,
+translation scale `s`, and initial poses `L0`, `F0`, subsequent targets are:
+
+```text
+p_target = p_F0 + s * A * (p_L - p_L0)
+R_target = R_F0                                      # track_orientation=false
+R_target = A * (R_L * R_L0^T) * A^T * R_F0           # track_orientation=true
+```
+
+Gripper opening follows the relative leader-opening change, independently of IK,
+and is clamped to the follower range. IK failures hold the gripper as well as joints.
+The first six output actions remain follower joint angles, so existing limiters,
+recording features, and policy action units are preserved.
+
+### Check the model and frames before enabling motors
+
+Reapply the updated loop hook if updating an existing installation:
+
+```bash
+python scripts/apply_leader_pause_patch.py
+```
+
+First run the offline demonstration; it does not open CAN sockets:
+
+```bash
+python scripts/preview_end_effector.py --synthetic --seconds 5
+```
+
+Then stop any controller commanding the follower and run the receive-only preview:
+
+```bash
+python scripts/preview_end_effector.py \
+  --config=configs/teleoperate_eef.yaml \
+  --seconds=20
+```
+
+This opens receive-only readers and never creates the command SDK or enables motors.
+Gently move the supported leader and gripper to provide initial frames. Output
+includes leader TCP position, follower/target position, target orientation as a
+rotation vector, candidate joint targets, solve residuals/timing, and
+`motor_commands_sent: false`. The real follower stays where it is, so a large
+leader displacement may trigger the solution-distance guard in this preview.
+A successful preview validates calculations, not physical motion or collision safety.
+
+Set these fields in **both** EEF YAML files for your actual installation:
+
+| `teleop.eef` field | Meaning |
+| --- | --- |
+| `leader_to_follower_rpy` | Roll, pitch, yaw in radians for the rotation mapping leader **base_link** axes into follower **base_link** axes. Identity is correct only if those axes are aligned. Relative control cancels the base translation. |
+| `leader_tcp_xyz`, `follower_tcp_xyz` | Tool-center position in metres relative to each model's `link6`. Defaults `[0,0,0]` control `link6`, **not the fingertips**. Measure the gripper/tool offsets for tip control. |
+| `leader_tcp_rpy`, `follower_tcp_rpy` | Tool-center orientation relative to each `link6`, in radians. |
+| `leader_joint_offsets_rad`, `follower_joint_offsets_rad` | Optional verified encoder-to-model offsets: model angle = reported angle + offset. Defaults are zero; no guessed sign flips are applied. |
+| `translation_scale` | Defaults to `0.5`: 2 cm of leader TCP movement requests 1 cm of follower movement. |
+| `track_orientation` | The EEF YAML configs set `true`: map relative position and rotation. The library default remains `false`; explicitly set `false` to hold the starting tool orientation. |
+| `frames_verified` | Defaults to `false`. Live teleoperator construction refuses EEF mode until you explicitly confirm the transforms/conventions by setting it true. Dry-run preview does not require it. |
+
+The leader source defaults to its transmitted control targets, not independent
+joint feedback. Verify that those values represent the leader pose in the selected
+model conventions. Checking physical motion of each joint and computed TCP
+movement is necessary; do not infer correctness merely from the model name.
+
+### Live commands after frame verification
+
+Clear the workspace and keep the physical stop accessible. Begin with small leader
+movements. The local `teleoperate_eef.yaml` saves the tested settings: motors
+enabled, frames verified, orientation tracking enabled, translation scale 0.5,
+leader connection timeout 30 s, speed 20, joint step 0.012 rad, diagnostics on,
+and no startup zeroing. Its workspace bounds are 1 m translation and 2 rad
+rotation. These settings apply to this installation; the recording config
+retains its separate defaults.
+
+```bash
+lerobot-teleoperate --config_path=configs/teleoperate_eef.yaml
+```
+
+Both EEF configs enable relative orientation tracking. You can make this explicit
+with `--teleop.eef.track_orientation=true`; use `false` to hold the starting
+orientation. The controller represents orientation with rotation matrices and
+SO(3) rotation errors, which encode the same 3D rotations as unit quaternions.
+Position scale does not scale rotation: a 10-degree leader rotation requests a
+10-degree relative follower tool rotation, transformed by the base alignment.
+The teleoperation rotation boundary is 2 rad (about 115 degrees) from the anchor;
+exceeding it holds the follower. Joint and IK limits still apply. Matching tool
+rotation does not require matching individual wrist joint angles.
+The preview script is receive-only: `motor_commands_sent: false` means the
+follower is intentionally stationary, even when IK reports `tracking`.
+Use the live command above to execute targets after frame verification.
+
+### Optional return to zero before teleoperation
+
+Add `--robot.reset_to_zero_on_connect=true` to either joint or EEF teleoperation
+with `--robot.enable_motors=true`. For example, for joint teleoperation:
+
+```bash
+lerobot-teleoperate --config_path=configs/teleoperate.yaml \
+  --robot.enable_motors=true --robot.reset_to_zero_on_connect=true
+```
+
+This moves follower J1–J6 toward their existing zero angles at 30 Hz using the
+configured joint step and speed limits; it retains the current gripper opening.
+It never changes encoder calibration or moves the leader. Clear the entire
+return path first: this joint-space move does not check for obstacles.
+Completion requires all six joints within 0.005 rad (about 0.29°) of zero.
+Fresh feedback and healthy controller status are required throughout; failure
+or the default 60-second timeout aborts startup. Override the timeout with
+`--robot.reset_to_zero_timeout_s=90` if needed. Ctrl+C interrupts the return;
+disconnect retains the last bounded target rather than disabling torque.
+
+After returning, joint mode follows the leader through the normal step limiter;
+place the leader near zero before starting. EEF mode anchors at the follower's
+new position. The option defaults to false and never causes a return on exit.
+
+To record the same mapping with both cameras:
+
+```bash
+lerobot-record \
+  --config_path=configs/record_eef.yaml \
+  --teleop.eef.frames_verified=true \
+  --robot.enable_motors=true
+```
+
+EEF recordings use `data/piper_x_eef_pick_TIMESTAMP` and
+`local/piper_x_eef_pick_TIMESTAMP`; episode keys and resume/delete procedures are
+unchanged. Use the same frame settings in recording as in teleoperation. In EEF
+mode the motion diagnostic's `leader` field is the **mapped follower joint request**;
+the separate `End-effector mapping` log reports Cartesian state and solver status.
+
+### Bounds and failure behavior
+
+For a wrist that appears stationary, read motor fault/enable flags without motion:
+
+```bash
+python scripts/inspect_motor_status.py
+```
+
+With other controllers stopped, inspect a one-degree J4 probe without enabling:
+
+```bash
+python scripts/probe_wrist.py --joint 4
+```
+
+Only after clearing the wrist path and placing the physical stop within reach,
+add `--execute --prepared`. This enables the follower, holds the other joints
+and gripper at their starting targets, and requests a one-degree positive move
+for three seconds. It uses speed 10 and a 0.006 rad feedback-relative step.
+Use `--joint 5` to test J5 separately; `--direction -1` selects a negative move.
+`--step-rad 0.003` reproduces the smaller teleoperation offset.
+The probe aborts on stale motor status, motor faults, or unexpected joint travel.
+Ctrl+C stops commands; there is no automatic return or torque disable.
+
+If a valid full IK target exceeds `max_solution_delta_rad`, the mapper tries
+nearer Cartesian waypoints from the measured pose within the same solve-time
+budget. Every accepted waypoint still satisfies the joint-distance guard and
+the final motor step limiter. This prevents ordinary following lag from latching
+a permanent hold. It does not bypass unreachable targets or workspace limits.
+
+`tracking_position_error_m` is the measured TCP-to-requested-target error;
+`position_error_m` is the full-target IK residual, not physical tracking accuracy.
+`waypoint_fraction` below 1 indicates catch-up through an intermediate target.
+`relative_workspace_limit` means the requested displacement exceeds the configured
+radius (1 m in the saved teleoperation config). Reduce `translation_scale` to map larger leader motions
+inside this radius. `track_orientation=false` holds the initial orientation;
+it does not allow free tool rotation. Returning to zero is optional and puts
+J2/J3 at firmware limit boundaries, so it is not a general EEF working pose.
+
+- Library/recording relative workspace defaults: 10 cm translation and,
+  when orientation is enabled, 0.7 rad rotation; the saved teleoperation config
+  uses 1 m and 2 rad. Requests beyond the configured bounds hold rather
+  than silently clipping the Cartesian pose.
+- IK intersects the configured follower limits with the bundled URDF limits.
+  The URDF currently caps J6 at ±120°, even though the stored firmware limit is
+  ±170°. An initial pose outside that intersection is rejected.
+- IK uses the current/nearby prior solution, damping, bounded iteration steps,
+  line search, and a 20 ms solve budget checked between iterations. It accepts
+  only solutions within 0.5 mm translation and 0.005 rad orientation residual.
+  A candidate more than 0.5 rad from any measured joint is rejected.
+- `relative_workspace_limit`, `singular`, `solve_timeout`,
+  `unreachable_or_no_convergence`, or `joint_solution_too_far` means the mapper
+  holds the captured follower pose; it does not send the failed partial solution.
+  Returning to a solvable target can resume following through the normal limiter.
+- Leader silence retains the existing pause behavior. When all targets refresh,
+  **EEF mode re-anchors at both current poses**, discarding movement made during
+  the pause. Restarting a session also captures new references.
+- The final follower limiter still applies after IK. Consequently an intermediate
+  executed joint target need not exactly meet the requested Cartesian pose.
+  This mode does not eliminate speed limits or guarantee a straight TCP path.
+- There is **no collision checking, obstacle avoidance, force control, or physical
+  calibration solver**. Passing software tests does not validate the physical
+  frame mapping or make autonomous operation safe.
+
 ## Record demonstrations
 
 To record using the same motion settings as the command above:
@@ -226,8 +426,9 @@ training loader before collecting a large dataset.
 
 Actions and observations use `joint_1.pos` through `joint_6.pos` in **radians**, then
 `gripper.pos` in **metres**. Images are `observation.images.wrist` and
-`observation.images.third_person`. There are no implicit sign flips, offsets,
-joint aliases, or Cartesian transformations.
+`observation.images.third_person`. Joint mode has no implicit sign flips, offsets, joint aliases, or Cartesian
+transformations. End-effector mode applies only the explicit model/frame mapping
+configured below; its output is still joint radians and gripper metres.
 
 The supplied configs use limits queried from this follower on 2026-10-06:
 J1 ±150°, J2 0–180°, J3 −170–0°, J4/J5 ±89°, J6 ±170°. Gripper range is 0–0.07 m.
@@ -250,8 +451,9 @@ Findings from the supervised user runs:
   failed motors.
 - H and X have different joint-frame orientations and wrist geometry. Matching
   joint numbers is not proof of matching physical poses or gripper trajectories.
-  Mapping/calibration verification and, if desired, Cartesian retargeting remain
-  unfinished. Do not guess sign flips from appearance alone.
+  Model-based relative Cartesian retargeting is now implemented, but physical
+  mapping/calibration verification remains unfinished. Do not guess sign flips
+  from appearance alone.
 
 Reference robot models: [AgileX Piper-H URDF](https://github.com/agilexrobotics/agx_arm_urdf/blob/main/piper_h/urdf/piper_h_description.urdf)
 and [AgileX Piper-X URDF](https://github.com/agilexrobotics/agx_arm_urdf/blob/main/piper_x/urdf/piper_x_description.urdf).
@@ -309,7 +511,9 @@ ruff check src tests scripts
 
 The tests cover real LeRobot
 teleoperation/recording loops with fake hardware, v3 dataset write/read, silent-leader
-pause/resume, rejection of stale queued feedback, limit checks, and mode-switch sequencing.
+pause/resume, rejection of stale queued feedback, limit checks, mode-switch
+sequencing, FK/Jacobian consistency, constrained IK, relative frame mapping,
+no-jump anchoring, and EEF integration through both actual LeRobot loops.
 Timestamp creation was separately checked with two successive temporary dataset
 folders and preservation of the existing base folder. Unit tests do not establish
 physical safety, exact H→X pose mapping, or policy performance.

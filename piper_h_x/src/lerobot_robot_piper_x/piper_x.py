@@ -25,6 +25,8 @@ class PiperXConfig(RobotConfig):
     # response (0xAD) is optional and must be validated for the installed firmware.
     high_follow: bool = False
     debug_motion: bool = False
+    reset_to_zero_on_connect: bool = False
+    reset_to_zero_timeout_s: float = 60.0
     connect_timeout_s: float = 5.0
     feedback_timeout_s: float = 0.5
     max_joint_step_rad: float = 0.003
@@ -48,6 +50,7 @@ class PiperXConfig(RobotConfig):
             "max_joint_step_rad",
             "max_gripper_step_m",
             "gripper_max_m",
+            "reset_to_zero_timeout_s",
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive and finite")
@@ -60,6 +63,11 @@ class PiperXConfig(RobotConfig):
             raise ValueError("joint_limits_rad must contain six finite [min, max] pairs")
         if set(self.cameras) & set(KEYS):
             raise ValueError("Camera names must not overlap joint names")
+        if self.reset_to_zero_on_connect:
+            if not self.enable_motors:
+                raise ValueError("reset_to_zero_on_connect requires enable_motors=true")
+            if any(not lo <= 0 <= hi for lo, hi in self.joint_limits_rad):
+                raise ValueError("Zero must be inside every configured joint limit")
 
 
 class PiperX(Robot):
@@ -164,9 +172,33 @@ class PiperX(Robot):
                         raise ConnectionError("Follower enable timed out")
                     time.sleep(0.05)
             self._connected = True
+            if self.config.reset_to_zero_on_connect:
+                self.reset_to_zero()
         except BaseException:
             self.disconnect()
             raise
+
+    def reset_to_zero(self):
+        """Move to existing joint zeros at 30 Hz; never change calibration or grip."""
+        if not self.is_connected or self.sdk is None:
+            raise RuntimeError("Return to zero requires a connected, enabled follower")
+        present = self.reader.positions()
+        validate_initial_pose(present, self.config)
+        target = dict.fromkeys(KEYS, 0.0)
+        target[KEYS[-1]] = present[KEYS[-1]]
+        validate_initial_pose(target, self.config)
+        deadline = time.monotonic() + self.config.reset_to_zero_timeout_s
+        logger.info("Returning follower J1-J6 to zero; retaining gripper opening")
+        while True:
+            self.reader.check_follower_status()
+            present = self.reader.positions()
+            if all(abs(present[k]) <= 0.005 for k in KEYS[:6]):
+                logger.info("Follower reached zero within 0.005 rad; starting teleoperation")
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Follower return to zero timed out; teleoperation was not started")
+            self.send_action(target)
+            time.sleep(1 / 30)
 
     def get_observation(self):
         if not self.is_connected:

@@ -1,0 +1,62 @@
+# Experimental relative TCP control. Read README before live use.
+# Zero TCP offsets refer to link6, not fingertips. Verify transforms first.
+# Track relative position and orientation; rotations use the verified base alignment.
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: true
+  reset_to_zero_on_connect: false
+  debug_motion: true
+  joint_limits_rad:
+  - - -2.6179938779914944
+    - 2.6179938779914944
+  - - 0.0
+    - 3.141592653589793
+  - - -2.9670597283903604
+    - 0.0
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -2.9670597283903604
+    - 2.9670597283903604
+  cameras: {}
+  high_follow: false
+  motion_speed: 20
+  max_joint_step_rad: 0.012
+teleop:
+  type: piper_x_leader
+  id: piper_x_leader
+  can_name: piper_leader
+  source: control
+  connect_timeout_s: 30
+  control_mode: end_effector
+  eef:
+    frames_verified: true
+    translation_scale: 0.5
+    track_orientation: true
+    leader_to_follower_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    leader_tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.0
+    follower_tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.0
+    leader_tcp_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    follower_tcp_rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    max_translation_m: 1.0
+    max_rotation_rad: 2.0
+fps: 30
+display_data: false
