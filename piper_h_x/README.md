@@ -214,8 +214,9 @@ movements. The local `teleoperate_eef.yaml` saves the tested settings: motors
 enabled, frames verified, orientation tracking enabled, translation scale 0.5,
 leader connection timeout 30 s, speed 20, joint step 0.012 rad, diagnostics on,
 and no startup zeroing. Its workspace bounds are 1 m translation and 2 rad
-rotation. These settings apply to this installation; the recording config
-retains its separate defaults.
+rotation. These settings apply to this installation; `record_eef.yaml` uses
+the same motion and EEF settings, with both cameras and timestamped datasets.
+Both configurations enable motors by default.
 
 ```bash
 lerobot-teleoperate --config_path=configs/teleoperate_eef.yaml
@@ -261,10 +262,7 @@ new position. The option defaults to false and never causes a return on exit.
 To record the same mapping with both cameras:
 
 ```bash
-lerobot-record \
-  --config_path=configs/record_eef.yaml \
-  --teleop.eef.frames_verified=true \
-  --robot.enable_motors=true
+lerobot-record --config_path=configs/record_eef.yaml
 ```
 
 EEF recordings use `data/piper_x_eef_pick_TIMESTAMP` and
@@ -311,9 +309,9 @@ inside this radius. `track_orientation=false` holds the initial orientation;
 it does not allow free tool rotation. Returning to zero is optional and puts
 J2/J3 at firmware limit boundaries, so it is not a general EEF working pose.
 
-- Library/recording relative workspace defaults: 10 cm translation and,
-  when orientation is enabled, 0.7 rad rotation; the saved teleoperation config
-  uses 1 m and 2 rad. Requests beyond the configured bounds hold rather
+- Library relative workspace defaults: 10 cm translation and,
+  when orientation is enabled, 0.7 rad rotation; the saved EEF teleoperation
+  and recording configs use 1 m and 2 rad. Requests beyond the configured bounds hold rather
   than silently clipping the Cartesian pose.
 - IK intersects the configured follower limits with the bundled URDF limits.
   The URDF currently caps J6 at ±120°, even though the stored firmware limit is
