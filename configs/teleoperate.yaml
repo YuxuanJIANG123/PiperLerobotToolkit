@@ -1,0 +1,37 @@
+# Two Piper-X arms: passive feedback leader and bounded follower.
+# Follower limits/cameras inherited from the existing installation; verify if replaced.
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: false
+  high_follow: false
+  motion_speed: 100
+  # Maximum target offset from measured joints, not a velocity guarantee.
+  max_joint_step_rad: 0.03
+  max_gripper_step_m: 0.01
+  debug_motion: true
+  joint_limits_rad:
+  - - -2.6179938779914944
+    - 2.6179938779914944
+  - - 0.0
+    - 3.141592653589793
+  - - -2.9670597283903604
+    - 0.0
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -2.9670597283903604
+    - 2.9670597283903604
+  cameras: {}
+teleop:
+  type: piper_x_leader
+  id: piper_x_leader
+  can_name: piper_leader
+  source: feedback
+  feedback_timeout_s: 0.5
+  connect_timeout_s: 30
+  control_mode: joint
+fps: 15
+display_data: false
