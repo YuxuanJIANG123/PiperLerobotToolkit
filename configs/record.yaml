@@ -5,6 +5,16 @@ robot:
   id: piper_x_follower
   can_name: piper_follower
   enable_motors: false
+  # Measured follower pose captured on 2026-10-14; radians and metres.
+  recording_reset_pose:
+    joint_1.pos: 0.04827580711016315
+    joint_2.pos: 0.20919516414404035
+    joint_3.pos: -0.1208989572856472
+    joint_4.pos: 0.010175269539126942
+    joint_5.pos: 0.10239846721450732
+    joint_6.pos: -0.09283406291357839
+    gripper.pos: 0.01
+  recording_reset_timeout_s: 60.0
   high_follow: false
   motion_speed: 50
   # Maximum target offset from measured joints, not a velocity guarantee.

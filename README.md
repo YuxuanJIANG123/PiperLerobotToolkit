@@ -22,25 +22,50 @@ The vendor checkout, virtual environment, datasets, and logs are not versioned.
 
 ## CAN setup
 
-Identify which USB-CAN adapter connects to each arm before assigning roles:
+CAN numbers such as `can0` and `can1` can change after reconnecting. Use the
+adapters' unique USB serial numbers to assign persistent role names. The mapping
+below was read from the adapters at the previously documented USB ports (leader
+`5-1`, follower `1-4`); verify the physical CAN wiring before installing it:
+
+| Role | USB adapter serial | Persistent interface name |
+| --- | --- | --- |
+| Leader | `0027002F4648570B20303731` | `piper_leader` |
+| Follower | `002E00254648570A20303731` | `piper_follower` |
+
+These serials identify the USB-CAN adapters, not the arms. Keep each adapter with
+its assigned arm. Swapping USB ports is fine; swapping the CAN cables between
+arms changes the physical roles and requires updating the mapping.
+
+Inspect currently connected adapters without transmitting CAN commands:
 
 ```bash
 ip -details link show type can
+udevadm info --query=property --path=/sys/class/net/can0
+udevadm info --query=property --path=/sys/class/net/can1
 ```
 
-For the current installation, `can0` at USB `1-4` was the follower and `can1` at
-USB `5-1` was the leader. Enumeration can change after reconnecting. With both
-interfaces down, and only after checking that mapping:
+Look for `ID_SERIAL_SHORT`. Substitute the current interface names if needed.
+For different adapters, update the serials in `configs/udev/99-piper-can.rules`.
+After verifying the mapping, install the persistent naming rules once:
 
 ```bash
-sudo ip link set can0 name piper_follower
-sudo ip link set can1 name piper_leader
+sudo install -m 0644 configs/udev/99-piper-can.rules /etc/udev/rules.d/99-piper-can.rules
+sudo udevadm control --reload-rules
+```
+
+Stop robot controllers before unplugging and reconnecting the USB adapters to
+apply the rules. Then verify the names and bring up the required interfaces:
+
+```bash
+ip -details link show type can
 sudo ip link set piper_follower up type can bitrate 1000000
 sudo ip link set piper_leader up type can bitrate 1000000
 ```
 
-These names are not persistent across reboot/reconnection. Alternatively override
-`--robot.can_name=...` and `--teleop.can_name=...` in the launch command.
+The names now follow the adapter serials across reconnections and reboots.
+The rules only assign names: run the `ip link ... up` commands after each
+reconnection or reboot. Replay needs only `piper_follower`; recording and
+teleoperation need both interfaces.
 
 Inspect without transmitting commands:
 
@@ -135,6 +160,18 @@ upload. New runs create matching timestamped IDs/folders beneath
 `local/piper_x_pair_pick_TIMESTAMP` and `data/piper_x_pair_pick_TIMESTAMP`.
 Data uses LeRobot v3 format. Leader-silence holds do not pause the episode clock.
 
+`robot.recording_reset_pose` stores the follower pose captured on 2026-10-14
+(joint radians and gripper metres). Between episodes, including retries, the
+follower returns to this pose using the configured target-offset bounds, then
+holds it for `dataset.reset_time_s`. Return travel has a separate 60-second timeout;
+stale feedback, faults, or timeout abort the run. Reset movement is not recorded,
+and the leader does not control the follower during reset. The gripper also
+returns to its saved opening (10 mm). Keep the return path clear and reposition
+the leader near the reset pose before the next episode starts. Right arrow can
+end the hold early but cannot skip reaching the pose; `q` stops reset. There is
+no automatic reset before the first episode, after the final episode, or on quit.
+Set `robot.recording_reset_pose: null` to restore manual teleoperation during reset.
+
 - `n` / Right arrow: end capture early, proceed through reset and save.
 - `r` / Left arrow: discard the unsaved episode and repeat it.
 - `q` / Esc: save the current episode and exit normally.
@@ -149,6 +186,45 @@ lerobot-record --config_path=configs/record.yaml --robot.enable_motors=true \
 
 Use the exact existing path and the same camera, unit, and control configuration.
 Resume preserves the supplied name and adds the configured number of episodes.
+
+## Replay a demonstration
+
+`lerobot-replay` sends one episode's recorded actions to the follower.
+`configs/replay.yaml` uses the same follower settings as `configs/record.yaml`;
+no leader or cameras are needed. Use a joint-position dataset recorded with this
+adapter (`piper_x_pair_pick_*`). Set `dataset.repo_id` and `dataset.root` in
+`configs/replay.yaml` to the exact existing dataset ID and folder, replacing
+`TIMESTAMP`. Set `dataset.episode` to the desired episode index, starting at zero.
+
+Verify the follower CAN interface is up and matches `robot.can_name`. Stop any
+recording or teleoperation process, turn off teaching recording/playback on the
+follower, and prepare it near the episode's starting pose. Clear its workspace
+and keep the physical stop accessible. From the project directory, the following
+command enables motors and moves the follower:
+
+```bash
+source .venv/bin/activate
+lerobot-replay --config_path=configs/replay.yaml --robot.enable_motors=true
+```
+
+You can also override the dataset and episode on the command line:
+
+```bash
+lerobot-replay --config_path=configs/replay.yaml --robot.enable_motors=true \
+  --dataset.repo_id=local/piper_x_pair_pick_TIMESTAMP \
+  --dataset.root=data/piper_x_pair_pick_TIMESTAMP \
+  --dataset.episode=0
+```
+
+Replay uses the dataset's recorded frame rate (30 FPS with the supplied recording
+configuration). In this pinned LeRobot version, `--dataset.fps` does not override
+replay timing. Joint limits and target-offset bounds still apply, so physical
+tracking may differ from the recording. There is no automatic move to the first
+recorded pose. Ctrl+C closes communication but does not disable torque or act as
+an emergency stop.
+
+To watch the recorded camera videos instead of moving the robot, open the MP4
+files beneath `data/piper_x_pair_pick_TIMESTAMP/videos/`.
 
 ## Additional tools
 

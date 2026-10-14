@@ -1,0 +1,33 @@
+# Replay one recorded joint-position episode on the follower.
+# Follower settings match record.yaml; leader and cameras are not needed.
+robot:
+  type: piper_x
+  id: piper_x_follower
+  can_name: piper_follower
+  enable_motors: false
+  high_follow: false
+  motion_speed: 50
+  # Maximum target offset from measured joints, not a velocity guarantee.
+  max_joint_step_rad: 0.03
+  max_gripper_step_m: 0.003
+  debug_motion: true
+  joint_limits_rad:
+  - - -2.6179938779914944
+    - 2.6179938779914944
+  - - 0.0
+    - 3.141592653589793
+  - - -2.9670597283903604
+    - 0.0
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -1.5533430342749532
+    - 1.5533430342749532
+  - - -2.9670597283903604
+    - 2.9670597283903604
+  cameras: {}
+dataset:
+  # Replace TIMESTAMP with the exact existing dataset folder suffix.
+  repo_id: local/piper_x_pair_pick_20261013_203249_208765
+  root: data/piper_x_pair_pick_20261013_203249_208765
+  episode: 0
+play_sounds: false

@@ -15,6 +15,7 @@ if [[ ! -x .venv/bin/python ]]; then
   uv venv --python 3.12 .venv
 fi
 python3 scripts/apply_recording_patch.py
+python3 scripts/apply_recording_reset_patch.py
 python3 scripts/apply_leader_pause_patch.py
 python3 scripts/apply_dataset_stamp_patch.py
 uv pip install --python .venv/bin/python -e 'vendor/lerobot[core_scripts,intelrealsense]' -e . pytest ruff

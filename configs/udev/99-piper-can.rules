@@ -1,0 +1,5 @@
+# Adapter roles inferred from the documented installation: leader USB 5-1,
+# follower USB 1-4. Verify physical CAN wiring before installing these rules.
+# Names follow the USB adapters; keep each adapter attached to its assigned arm.
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="0027002F4648570B20303731", NAME="piper_leader"
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="002E00254648570A20303731", NAME="piper_follower"

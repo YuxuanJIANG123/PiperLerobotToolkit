@@ -62,3 +62,63 @@ def test_recorded_action_is_transmitted_target(tmp_path, silent):
     assert np.all(actions[:, :6] <= 0.003)
     assert np.all(observations == 0)
     assert dataset.meta.info.codebase_version == "v3.0"
+
+
+def test_unrecorded_reset_uses_saved_pose_not_leader(tmp_path, monkeypatch):
+    import lerobot_robot_piper_x.piper_x as module
+
+    target = dict.fromkeys(KEYS, 0.02)
+    robot = PiperX(PiperXConfig(calibration_dir=tmp_path, recording_reset_pose=target))
+    robot.reader, robot.sdk, robot._connected = FakeReader(), FakeSDK(), True
+    present = dict.fromkeys(KEYS, 0.0)
+    robot.reader.positions = lambda: present.copy()
+    commands = []
+    original_send = robot.send_action
+
+    def send(action):
+        sent = original_send(action)
+        commands.append(sent)
+        present.update(sent)
+        return sent
+
+    robot.send_action = send
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module.time, "sleep", lambda dt: clock.__setitem__(0, clock[0] + dt))
+    teleop_proc, action_proc, obs_proc = make_default_processors()
+    record_loop(
+        robot=robot, events={"exit_early": False}, fps=30,
+        teleop_action_processor=teleop_proc, robot_action_processor=action_proc,
+        robot_observation_processor=obs_proc, control_time_s=0.1,
+    )
+    assert len(commands) > 1
+    assert abs(present[KEYS[0]] - target[KEYS[0]]) <= 0.005
+    assert abs(present[KEYS[-1]] - target[KEYS[-1]]) <= 0.001
+    assert commands[0][KEYS[0]] <= robot.config.max_joint_step_rad
+    assert commands[0][KEYS[-1]] <= robot.config.max_gripper_step_m
+    robot.disconnect()
+
+
+def test_recording_reset_timeout_and_stop(tmp_path, monkeypatch):
+    import lerobot_robot_piper_x.piper_x as module
+
+    robot = PiperX(PiperXConfig(
+        calibration_dir=tmp_path, recording_reset_pose=dict.fromkeys(KEYS, 0.02),
+        recording_reset_timeout_s=0.05,
+    ))
+    robot.reader, robot.sdk, robot._connected = FakeReader(), FakeSDK(), True
+    clock = [0.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module.time, "sleep", lambda dt: clock.__setitem__(0, clock[0] + dt))
+    robot.recording_reset({"stop_recording": True}, 10, 30)
+    assert robot.sdk.calls == []
+    with pytest.raises(TimeoutError, match="Recording reset timed out"):
+        robot.recording_reset({"exit_early": True}, 10, 30)
+    robot.disconnect()
+
+
+def test_recording_reset_rejects_invalid_pose():
+    with pytest.raises(ValueError, match="recording_reset_pose"):
+        PiperXConfig(recording_reset_pose={})
+    with pytest.raises(ValueError, match="outside the configured limits"):
+        PiperXConfig(recording_reset_pose=dict.fromkeys(KEYS, float("nan")))

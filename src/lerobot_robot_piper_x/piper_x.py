@@ -25,6 +25,8 @@ class PiperXConfig(RobotConfig):
     # response (0xAD) is optional and must be validated for the installed firmware.
     high_follow: bool = False
     debug_motion: bool = False
+    recording_reset_pose: dict[str, float] | None = None
+    recording_reset_timeout_s: float = 60.0
     reset_to_zero_on_connect: bool = False
     reset_to_zero_timeout_s: float = 60.0
     connect_timeout_s: float = 5.0
@@ -51,6 +53,7 @@ class PiperXConfig(RobotConfig):
             "max_gripper_step_m",
             "gripper_max_m",
             "reset_to_zero_timeout_s",
+            "recording_reset_timeout_s",
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive and finite")
@@ -63,6 +66,10 @@ class PiperXConfig(RobotConfig):
             raise ValueError("joint_limits_rad must contain six finite [min, max] pairs")
         if set(self.cameras) & set(KEYS):
             raise ValueError("Camera names must not overlap joint names")
+        if self.recording_reset_pose is not None:
+            if set(self.recording_reset_pose) != set(KEYS):
+                raise ValueError(f"recording_reset_pose must contain exactly {KEYS}")
+            validate_initial_pose(self.recording_reset_pose, self)
         if self.reset_to_zero_on_connect:
             if not self.enable_motors:
                 raise ValueError("reset_to_zero_on_connect requires enable_motors=true")
@@ -200,6 +207,41 @@ class PiperX(Robot):
             self.send_action(target)
             time.sleep(1 / 30)
 
+    def recording_reset(self, events, hold_time_s, fps):
+        """Return to the saved pose, then hold for the unrecorded reset window."""
+        target = self.config.recording_reset_pose
+        if target is None:
+            raise ValueError("No recording_reset_pose configured")
+        if not self.is_connected or self.sdk is None:
+            raise RuntimeError("Recording reset requires a connected, enabled follower")
+        validate_initial_pose(target, self.config)
+        deadline = time.monotonic() + self.config.recording_reset_timeout_s
+        hold_started = None
+        logger.info("Returning to saved recording reset pose")
+        while True:
+            if events.get("stop_recording"):
+                return
+            self.reader.check_follower_status()
+            present = self.reader.positions()
+            reached = all(
+                abs(present[k] - target[k]) <= (0.005 if i < 6 else 0.001)
+                for i, k in enumerate(KEYS)
+            )
+            now = time.monotonic()
+            if hold_started is None:
+                if reached:
+                    hold_started = now
+                    logger.info("Reset pose reached; reset window started")
+                elif now >= deadline:
+                    raise TimeoutError("Recording reset timed out before reaching the saved pose")
+            if hold_started is not None and (
+                now - hold_started >= hold_time_s or events.get("exit_early")
+            ):
+                events["exit_early"] = False
+                return
+            self.send_action(target)
+            time.sleep(1 / fps)
+
     def get_observation(self):
         if not self.is_connected:
             raise ConnectionError("Piper-X is not connected")
@@ -219,11 +261,11 @@ class PiperX(Robot):
         if self.config.debug_motion and time.monotonic() - self._last_motion_log >= 1.0:
             self._last_motion_log = time.monotonic()
             logger.info(
-                "Motion diagnostic (J1-J6 degrees, gripper mm): measured=%s leader=%s "
+                "Motion diagnostic (J1-J6 degrees, gripper mm): measured=%s requested=%s "
                 "sdk_target=%s motor_enable=%s feedback_timing=%s",
                 [round(present[k] * (180 / math.pi if i < 6 else 1000), 3)
                  for i, k in enumerate(KEYS)],
-                [round(action[k] * (180 / math.pi if i < 6 else 1000), 3)
+                [round(float(action[k]) * (180 / math.pi if i < 6 else 1000), 3)
                  for i, k in enumerate(KEYS)],
                 [round(sent[k] * (180 / math.pi if i < 6 else 1000), 3)
                  for i, k in enumerate(KEYS)],

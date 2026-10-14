@@ -218,6 +218,29 @@ def test_send_reports_exact_transmitted_target_and_disconnect_does_not_move(tmp_
     assert len(sdk.calls) == 4
 
 
+@pytest.mark.parametrize("debug_motion", [False, True])
+def test_replay_tensor_actions_match_float_commands(tmp_path, caplog, debug_motion):
+    import torch
+
+    robot = PiperX(PiperXConfig(calibration_dir=tmp_path, debug_motion=debug_motion))
+    sdk = FakeSDK()
+    reader = FakeReader()
+    reader.timing = dict
+    sdk.GetArmEnableStatus = lambda: True
+    robot.reader, robot.sdk, robot._connected = reader, sdk, True
+    action = {key: value for key, value in zip(KEYS, torch.ones(len(KEYS)))}
+    expected = limit_action(dict.fromkeys(KEYS, 1.0), reader.positions(), robot.config)
+    with caplog.at_level("INFO"):
+        sent = robot.send_action(action)
+    assert sent == expected
+    assert all(isinstance(value, float) for value in sent.values())
+    assert sdk.calls[1][1] == tuple(round(expected[k] * JOINT_FACTOR) for k in KEYS[:6])
+    assert sdk.calls[2][1][0] == round(expected[KEYS[-1]] * 1_000_000)
+    if debug_motion:
+        assert "Motion diagnostic" in caplog.text
+    robot.disconnect()
+
+
 def test_stale_feedback_prevents_all_writes(tmp_path):
     robot = PiperX(PiperXConfig(calibration_dir=tmp_path))
     sdk = FakeSDK()
