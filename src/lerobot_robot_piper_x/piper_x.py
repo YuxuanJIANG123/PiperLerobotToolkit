@@ -26,6 +26,7 @@ class PiperXConfig(RobotConfig):
     high_follow: bool = False
     debug_motion: bool = False
     recording_reset_pose: dict[str, float] | None = None
+    recording_reset_on_connect: bool = False
     recording_reset_timeout_s: float = 60.0
     reset_to_zero_on_connect: bool = False
     reset_to_zero_timeout_s: float = 60.0
@@ -70,6 +71,11 @@ class PiperXConfig(RobotConfig):
             if set(self.recording_reset_pose) != set(KEYS):
                 raise ValueError(f"recording_reset_pose must contain exactly {KEYS}")
             validate_initial_pose(self.recording_reset_pose, self)
+        if self.recording_reset_on_connect:
+            if self.recording_reset_pose is None:
+                raise ValueError("recording_reset_on_connect requires recording_reset_pose")
+            if self.reset_to_zero_on_connect:
+                raise ValueError("Choose recording_reset_on_connect or reset_to_zero_on_connect")
         if self.reset_to_zero_on_connect:
             if not self.enable_motors:
                 raise ValueError("reset_to_zero_on_connect requires enable_motors=true")
@@ -181,6 +187,8 @@ class PiperX(Robot):
             self._connected = True
             if self.config.reset_to_zero_on_connect:
                 self.reset_to_zero()
+            if self.config.recording_reset_on_connect and self.config.enable_motors:
+                self.recording_reset({}, hold_time_s=0, fps=30)
         except BaseException:
             self.disconnect()
             raise

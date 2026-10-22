@@ -13,6 +13,17 @@ for filename, variable in (("lerobot_teleoperate.py", "raw_action"), ("lerobot_r
         "                else:\n"
         f"                    {variable} = teleop.get_action()\n"
     )
+    if filename == "lerobot_record.py":
+        old_replacement = replacement
+        replacement = replacement.replace(
+            "act = teleop.get_action_for_observation(obs, follower_config=robot.config)\n",
+            "act = teleop.get_recording_action(obs, events, follower_config=robot.config)\n"
+            "                    if act is None:\n"
+            "                        break\n",
+        )
+        if old_replacement in source:
+            source = source.replace(old_replacement, replacement)
+            path.write_text(source)
     previous = replacement.replace("obs, follower_config=robot.config", "obs")
     if replacement in source:
         print(f"Pause hook already applied: {filename}")

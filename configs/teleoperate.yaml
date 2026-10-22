@@ -10,7 +10,7 @@ robot:
   # Maximum target offset from measured joints, not a velocity guarantee.
   max_joint_step_rad: 0.03
   max_gripper_step_m: 0.01
-  debug_motion: true
+  debug_motion: false
   joint_limits_rad:
   - - -2.6179938779914944
     - 2.6179938779914944

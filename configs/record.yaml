@@ -1,26 +1,27 @@
-# Two Piper-X arms: passive feedback leader and bounded follower.
-# Follower limits/cameras inherited from the existing installation; verify if replaced.
+# Two Piper-X arms: motorized reset, teaching feedback leader, bounded follower.
+# Wrist-only recording; verify the camera serial and follower limits if replaced.
 robot:
   type: piper_x
   id: piper_x_follower
   can_name: piper_follower
   enable_motors: false
-  # Measured follower pose captured on 2026-10-14; radians and metres.
+  # Measured wrist-camera starting pose captured on 2026-10-22; radians and metres.
+  recording_reset_on_connect: true
   recording_reset_pose:
-    joint_1.pos: 0.04827580711016315
-    joint_2.pos: 0.20919516414404035
-    joint_3.pos: -0.1208989572856472
-    joint_4.pos: 0.010175269539126942
-    joint_5.pos: 0.10239846721450732
-    joint_6.pos: -0.09283406291357839
-    gripper.pos: 0.01
+    joint_1.pos: 0.04867723283812185
+    joint_2.pos: 0.6633821953905247
+    joint_3.pos: -0.5133362395965723
+    joint_4.pos: 0.8360825248753636
+    joint_5.pos: -0.04091051766674708
+    joint_6.pos: 0.05173155902911193
+    gripper.pos: 0.0694
   recording_reset_timeout_s: 60.0
   high_follow: false
   motion_speed: 50
   # Maximum target offset from measured joints, not a velocity guarantee.
   max_joint_step_rad: 0.03
   max_gripper_step_m: 0.003
-  debug_motion: true
+  debug_motion: false
   joint_limits_rad:
   - - -2.6179938779914944
     - 2.6179938779914944
@@ -41,12 +42,6 @@ robot:
       width: 640
       height: 480
       fps: 30
-    third_person:
-      type: intelrealsense
-      serial_number_or_name: '405622074798'
-      width: 640
-      height: 480
-      fps: 30
 teleop:
   type: piper_x_leader
   id: piper_x_leader
@@ -55,6 +50,35 @@ teleop:
   feedback_timeout_s: 0.5
   connect_timeout_s: 30
   control_mode: joint
+  # Switch teaching with the physical button when prompted; reset motion is automatic.
+  automatic_reset: true
+  debug_motion: false
+  teaching_mode_switch: manual
+  teaching_button_timeout_s: 120.0
+  # Accept up to 3.5 degrees per joint; keep alignment at the same tolerance.
+  reset_joint_tolerance_rad: 0.061086523819801536
+  # Leader can open beyond 95 mm; follower remains limited to 70 mm.
+  reset_gripper_max_m: 0.10
+  # Accept up to 30 mm difference from the saved 69.4 mm opening.
+  reset_gripper_tolerance_m: 0.030
+  reset_motion_speed: 30
+  reset_max_joint_step_rad: 0.003
+  reset_max_gripper_step_m: 0.001
+  reset_timeout_s: 60.0
+  reset_mode_timeout_s: 5.0
+  # Independent conservative leader limits (radians); verify for the leader.
+  reset_joint_limits_rad:
+    - [-1.6057029118347832, 1.6057029118347832]
+    - [-0.022689280275926284, 1.5707963267948966]
+    - [-1.3962634015954636, 0.041887902047863905]
+    - [-1.5707963267948966, 1.5707963267948966]
+    - [-1.3439035240356338, 0.33161255787892263]
+    - [-1.5707963267948966, 1.5707963267948966]
+  require_start_alignment: true
+  alignment_joint_tolerance_rad: 0.061086523819801536
+  alignment_gripper_tolerance_m: 0.030
+  alignment_hold_s: 0.5
+  alignment_timeout_s: 120.0
 dataset:
   repo_id: local/piper_x_pair_pick
   no_stamp: false
@@ -63,7 +87,7 @@ dataset:
   fps: 30
   num_episodes: 10
   episode_time_s: 30
-  reset_time_s: 10
+  reset_time_s: 0
   push_to_hub: false
 display_data: false
 play_sounds: false

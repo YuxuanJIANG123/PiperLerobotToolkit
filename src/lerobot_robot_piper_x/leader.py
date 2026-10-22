@@ -1,7 +1,7 @@
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
 
@@ -18,15 +18,59 @@ class PiperXLeaderConfig(TeleoperatorConfig):
     connect_timeout_s: float = 10.0
     feedback_timeout_s: float = 0.5
     control_mode: str = "joint"
+    require_start_alignment: bool = False
+    automatic_reset: bool = False
+    debug_motion: bool = False
+    teaching_mode_switch: str = "sdk"
+    teaching_button_timeout_s: float = 120.0
+    reset_joint_tolerance_rad: float = 0.005
+    reset_gripper_tolerance_m: float = 0.001
+    reset_motion_speed: int = 10
+    reset_max_joint_step_rad: float = 0.003
+    reset_max_gripper_step_m: float = 0.001
+    reset_gripper_max_m: float = 0.07
+    reset_timeout_s: float = 60.0
+    reset_mode_timeout_s: float = 5.0
+    # Independent conservative leader envelope; verify for this installation.
+    reset_joint_limits_rad: list[list[float]] = field(default_factory=lambda: [
+        [math.radians(lo), math.radians(hi)]
+        for lo, hi in [(-92, 92), (-1.3, 90), (-80, 2.4), (-90, 90), (-77, 19), (-90, 90)]
+    ])
+    alignment_joint_tolerance_rad: float = 0.05
+    alignment_gripper_tolerance_m: float = 0.005
+    alignment_hold_s: float = 0.5
+    alignment_timeout_s: float = 120.0
 
     def __post_init__(self):
         if self.control_mode != "joint":
             raise ValueError("Only direct joint control is supported")
         if self.source not in ("control", "feedback"):
             raise ValueError("source must be control or feedback")
-        for value in (self.connect_timeout_s, self.feedback_timeout_s):
+        for value in (self.connect_timeout_s, self.feedback_timeout_s,
+                      self.alignment_joint_tolerance_rad, self.alignment_gripper_tolerance_m,
+                      self.alignment_hold_s, self.alignment_timeout_s,
+                      self.reset_max_joint_step_rad, self.reset_max_gripper_step_m,
+                      self.reset_joint_tolerance_rad, self.reset_gripper_tolerance_m,
+                      self.teaching_button_timeout_s,
+                      self.reset_gripper_max_m, self.reset_timeout_s, self.reset_mode_timeout_s):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError("Timeouts must be positive and finite")
+        if not 1 <= self.reset_motion_speed <= 100:
+            raise ValueError("reset_motion_speed must be 1..100")
+        if self.teaching_mode_switch not in ("sdk", "manual"):
+            raise ValueError("teaching_mode_switch must be sdk or manual")
+        if self.automatic_reset and (
+            self.reset_joint_tolerance_rad > self.alignment_joint_tolerance_rad
+            or self.reset_gripper_tolerance_m > self.alignment_gripper_tolerance_m
+        ):
+            raise ValueError("Reset tolerances must not exceed alignment tolerances")
+        if len(self.reset_joint_limits_rad) != 6 or any(
+            len(pair) != 2 or not all(math.isfinite(v) for v in pair) or pair[0] >= pair[1]
+            for pair in self.reset_joint_limits_rad
+        ):
+            raise ValueError("reset_joint_limits_rad must contain six finite [min, max] pairs")
+        if self.automatic_reset and (self.source != "feedback" or not self.require_start_alignment):
+            raise ValueError("automatic_reset requires source=feedback and require_start_alignment=true")
 
 
 class PiperXLeader(Teleoperator):
@@ -39,6 +83,8 @@ class PiperXLeader(Teleoperator):
         self.reader = PassiveReader(config.can_name, config.source, config.feedback_timeout_s)
         self._hold_positions = None
         self._hold_since = None
+        self._teaching_required = False
+        self._prepared_for_capture = False
 
     @property
     def action_features(self):
@@ -74,9 +120,127 @@ class PiperXLeader(Teleoperator):
     def get_action(self):
         return self._read_action()
 
+    def prepare_recording(self, robot, events, fps):
+        """Reset the motorized leader if opted in, then gate capture on alignment."""
+        if self.config.automatic_reset and not self._prepared_for_capture:
+            from .leader_reset import reset_leader
+
+            try:
+                reset_leader(self, robot, events, fps)
+            except InterruptedError:
+                if events.get("stop_recording"):
+                    return False
+                raise
+        self._prepared_for_capture = False
+        return self.wait_for_start_alignment(robot, events, fps)
+
+    def recording_reset(self, robot, events, hold_time_s, fps):
+        """Return follower, prepare leader, then run the environment reset window."""
+        self._prepared_for_capture = False
+        robot.recording_reset(events, hold_time_s=0, fps=fps)
+        if events.get("stop_recording"):
+            return
+        if not self.prepare_recording(robot, events, fps):
+            return
+        self._prepared_for_capture = True
+        if hold_time_s > 0:
+            logger.info("Both arms prepared; environment reset window started")
+            robot.recording_reset(events, hold_time_s=hold_time_s, fps=fps)
+        else:
+            logger.info("Both arms prepared; saving episode with no extra environment hold")
+
+    def get_recording_action(self, observation, events, follower_config=None):
+        """A manual teaching-OFF event ends capture without pursuing new targets."""
+        from .leader_reset import TeachingModeEnded
+
+        try:
+            return self.get_action_for_observation(observation, follower_config)
+        except TeachingModeEnded:
+            if not (self.config.automatic_reset and self.config.teaching_mode_switch == "manual"):
+                raise
+            logger.info("Leader teaching turned OFF: ending episode and starting reset")
+            events["exit_early"] = False
+            return None
+
+    def wait_for_start_alignment(self, robot, events, fps):
+        """Hold the follower while the user manually aligns the passive leader.
+
+        Called before recording starts, so waiting consumes no episode time or
+        dataset frames. This alignment phase never sends commands to the leader.
+        """
+        from .leader_reset import TeachingModeEnded
+
+        target = robot.config.recording_reset_pose
+        if target is None:
+            raise ValueError("Leader alignment requires robot.recording_reset_pose")
+        if not math.isfinite(fps) or fps <= 0:
+            raise ValueError("Alignment fps must be positive and finite")
+        started = time.monotonic()
+        aligned_since = None
+        last_log = float("-inf")
+        logger.warning("Keep the supported leader and gripper at the saved starting pose; "
+                       "recording waits for alignment. Press q/Esc to stop.")
+        while True:
+            if events.get("stop_recording"):
+                return False
+            now = time.monotonic()
+            if now - started >= self.config.alignment_timeout_s:
+                raise TimeoutError("Leader alignment timed out; turn teaching ON and match the saved pose. "
+                                   "Recording was not started")
+            # Keeps all follower freshness, status and command bounds in force.
+            robot.send_action(target)
+            present = robot.reader.positions()
+            teaching_off = False
+            try:
+                leader = self._read_action()
+            except TargetFramesUnavailable:
+                leader = None
+            except TeachingModeEnded:
+                if not (self.config.automatic_reset and self.config.teaching_mode_switch == "manual"):
+                    raise
+                leader = None
+                teaching_off = True
+            tolerances = {k: self.config.alignment_joint_tolerance_rad if i < 6
+                          else self.config.alignment_gripper_tolerance_m for i, k in enumerate(KEYS)}
+            aligned = leader is not None and all(
+                math.isfinite(leader[k]) and abs(leader[k] - target[k]) <= tolerances[k]
+                and math.isfinite(present[k]) and abs(present[k] - target[k]) <= tolerances[k]
+                for k in KEYS
+            )
+            if aligned:
+                if aligned_since is None:
+                    aligned_since = now
+                if now - aligned_since >= self.config.alignment_hold_s:
+                    self._hold_positions = None
+                    self._hold_since = None
+                    events["exit_early"] = False
+                    logger.info("Leader and follower aligned; preparation complete")
+                    return True
+            else:
+                aligned_since = None
+            if now - last_log >= (1 if self.config.debug_motion else 5):
+                if teaching_off:
+                    logger.warning("ACTION: teaching is OFF before capture. Support the leader and turn "
+                                   "teaching ON; keep it near the saved pose. Recording is paused, "
+                                   "follower holds position. Press q/Esc to stop.")
+                elif leader is None:
+                    logger.warning("Waiting for fresh leader feedback; gently move the supported leader")
+                elif self.config.debug_motion:
+                    logger.warning("Leader minus saved pose: joints(deg)=%s gripper(mm)=%.1f",
+                                   [round(math.degrees(leader[k] - target[k]), 1) for k in KEYS[:6]],
+                                   1000 * (leader[KEYS[-1]] - target[KEYS[-1]]))
+                else:
+                    logger.warning("Waiting for start alignment: keep the leader near the saved pose")
+                last_log = now
+            time.sleep(1 / fps)
+
     def _read_action(self):
         if not self.is_connected:
             raise ConnectionError("Piper-X leader is not connected")
+        if self._teaching_required:
+            from .leader_reset import require_teaching
+
+            require_teaching(self.reader)
         return self.reader.positions()
 
     def get_action_for_observation(self, observation, follower_config=None):
@@ -120,3 +284,5 @@ class PiperXLeader(Teleoperator):
         self.reader.disconnect()
         self._hold_positions = None
         self._hold_since = None
+        self._teaching_required = False
+        self._prepared_for_capture = False

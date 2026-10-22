@@ -19,12 +19,6 @@ robot:
       width: 640
       height: 480
       fps: 30
-    third_person:
-      type: intelrealsense
-      serial_number_or_name: '405622074798'
-      width: 640
-      height: 480
-      fps: 30
 strategy:
   type: base
 task: Pick up the object and place it in the container
