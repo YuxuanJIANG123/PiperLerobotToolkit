@@ -5,6 +5,7 @@ import math
 from .protocol import GRIPPER_FACTOR, JOINT_FACTOR, KEYS
 
 GRIPPER_FEEDBACK_TOLERANCE_M = 0.01
+JOINT_FEEDBACK_TOLERANCE_RAD = math.radians(0.5)
 
 
 def validate_initial_pose(present, config, *, feedback=True):
@@ -16,7 +17,7 @@ def validate_initial_pose(present, config, *, feedback=True):
             problems.append(f"{key}: non-finite feedback {value}")
             continue
         lo, hi = config.joint_limits_rad[i] if i < 6 else (0.0, config.gripper_max_m)
-        tolerance = GRIPPER_FEEDBACK_TOLERANCE_M if feedback and i == 6 else 0.0
+        tolerance = (JOINT_FEEDBACK_TOLERANCE_RAD if i < 6 else GRIPPER_FEEDBACK_TOLERANCE_M) if feedback else 0.0
         if not lo - tolerance <= value <= hi + tolerance:
             scale = 180 / math.pi if i < 6 else 1000
             unit = "deg" if i < 6 else "mm"
@@ -44,17 +45,20 @@ def limit_action(action, present, config):
         if i < 6:
             lo, hi = config.joint_limits_rad[i]
             delta, factor = config.max_joint_step_rad, JOINT_FACTOR
+            tolerance = JOINT_FEEDBACK_TOLERANCE_RAD
         else:
             lo, hi = 0, config.gripper_max_m
             delta, factor = config.max_gripper_step_m, GRIPPER_FACTOR
-            # A small encoder zero offset may exceed the normal motion step.
-            # Allow only the nearest endpoint as recovery in that case.
-            if lo - GRIPPER_FEEDBACK_TOLERANCE_M <= current < lo:
-                delta = max(delta, lo - current)
-            elif hi < current <= hi + GRIPPER_FEEDBACK_TOLERANCE_M:
-                delta = max(delta, current - hi)
-        # Intersect absolute and relative limits. Never jump back into an envelope
-        # if the current pose is outside it: refuse the command instead.
+            tolerance = GRIPPER_FEEDBACK_TOLERANCE_M
+        if not lo - tolerance <= current <= hi + tolerance:
+            raise ValueError(f"{key} feedback is outside the configured limits: {current}")
+        # For endpoint feedback offsets, permit recovery to the nearest
+        # representable in-range position even when beyond the normal step.
+        if current < lo:
+            delta = max(delta, math.ceil(lo * factor) / factor - current + 1e-12)
+        elif current > hi:
+            delta = max(delta, current - math.floor(hi * factor) / factor + 1e-12)
+        # Intersect absolute and relative limits; targets stay inside the envelope.
         low, high = max(lo, current - delta), min(hi, current + delta)
         raw_low, raw_high = math.ceil(low * factor), math.floor(high * factor)
         if raw_low > raw_high:

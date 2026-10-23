@@ -16,20 +16,8 @@ class TeachingModeEnded(ConnectionError):
 
 
 def validate_leader_feedback(present, limits):
-    """Allow tiny endpoint feedback offsets, never an out-of-range target.
-
-    Only the validation copy is clamped. Motion limiting still uses the raw
-    measured position, preserving the maximum commanded offset from feedback.
-    """
-    checked = dict(present)
-    # 0.01 degree covers encoder quantization such as 90.002 at a 90° limit.
-    joint_tolerance = min(math.radians(0.01), limits.max_joint_step_rad)
-    for key, (lo, hi) in zip(KEYS[:6], limits.joint_limits_rad):
-        value = checked[key]
-        if lo - joint_tolerance <= value <= hi + joint_tolerance:
-            checked[key] = min(hi, max(lo, value))
-    # The shared validator allows 3 mm of gripper encoder endpoint offset.
-    validate_initial_pose(checked, limits)
+    """Use the shared endpoint feedback tolerances for leader resets."""
+    validate_initial_pose(present, limits)
 
 
 def reset_error_summary(present, target, joint_tolerance=0.005, gripper_tolerance=0.001):
