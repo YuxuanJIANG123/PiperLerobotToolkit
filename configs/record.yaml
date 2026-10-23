@@ -85,7 +85,7 @@ dataset:
   root: data/piper_x_pair_pick
   single_task: Pick up the object and place it in the container
   fps: 30
-  num_episodes: 10
+  num_episodes: 100
   episode_time_s: 30
   reset_time_s: 0
   push_to_hub: false

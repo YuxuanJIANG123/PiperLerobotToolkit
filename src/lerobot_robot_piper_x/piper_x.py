@@ -70,7 +70,7 @@ class PiperXConfig(RobotConfig):
         if self.recording_reset_pose is not None:
             if set(self.recording_reset_pose) != set(KEYS):
                 raise ValueError(f"recording_reset_pose must contain exactly {KEYS}")
-            validate_initial_pose(self.recording_reset_pose, self)
+            validate_initial_pose(self.recording_reset_pose, self, feedback=False)
         if self.recording_reset_on_connect:
             if self.recording_reset_pose is None:
                 raise ValueError("recording_reset_on_connect requires recording_reset_pose")
@@ -200,8 +200,8 @@ class PiperX(Robot):
         present = self.reader.positions()
         validate_initial_pose(present, self.config)
         target = dict.fromkeys(KEYS, 0.0)
-        target[KEYS[-1]] = present[KEYS[-1]]
-        validate_initial_pose(target, self.config)
+        target[KEYS[-1]] = min(self.config.gripper_max_m, max(0.0, present[KEYS[-1]]))
+        validate_initial_pose(target, self.config, feedback=False)
         deadline = time.monotonic() + self.config.reset_to_zero_timeout_s
         logger.info("Returning follower J1-J6 to zero; retaining gripper opening")
         while True:
@@ -222,7 +222,7 @@ class PiperX(Robot):
             raise ValueError("No recording_reset_pose configured")
         if not self.is_connected or self.sdk is None:
             raise RuntimeError("Recording reset requires a connected, enabled follower")
-        validate_initial_pose(target, self.config)
+        validate_initial_pose(target, self.config, feedback=False)
         deadline = time.monotonic() + self.config.recording_reset_timeout_s
         hold_started = None
         logger.info("Returning to saved recording reset pose")

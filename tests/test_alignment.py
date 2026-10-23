@@ -101,6 +101,7 @@ def test_paired_reset_prepares_leader_before_hold_and_does_not_reset_twice(tmp_p
     monkeypatch.setattr(leader, "wait_for_start_alignment", lambda *args: True)
     leader.recording_reset(robot, {}, 10, 30)
     assert calls == [("follower", 0), ("leader", 0), ("follower", 10)]
+    monkeypatch.setattr(leader, "_read_action", lambda: robot.config.recording_reset_pose.copy())
     assert leader.prepare_recording(robot, {}, 30)
     assert calls == [("follower", 0), ("leader", 0), ("follower", 10)]
     # The next reset must return the leader again.
@@ -108,49 +109,72 @@ def test_paired_reset_prepares_leader_before_hold_and_does_not_reset_twice(tmp_p
     assert calls.count(("leader", 0)) == 2
 
 
-def test_second_episode_waits_for_teaching_on_without_resetting_again(tmp_path, monkeypatch, caplog):
-    from lerobot_robot_piper_x.leader_reset import TeachingModeEnded
-
-    leader, robot, sent, clock = setup_alignment(tmp_path, monkeypatch)
-    leader.config.automatic_reset = True
-    leader.config.teaching_mode_switch = "manual"
-    leader._prepared_for_capture = True
-
-    def action():
-        if clock[0] < 0.2:
-            raise TeachingModeEnded("0200010201000000")
-        return robot.config.recording_reset_pose.copy()
-
-    monkeypatch.setattr(leader, "_read_action", action)
-
-    def unwanted_reset(*args):
-        pytest.fail("Already prepared leader must not reset again")
-
-    monkeypatch.setattr("lerobot_robot_piper_x.leader_reset.reset_leader", unwanted_reset)
-    assert leader.prepare_recording(robot, {}, 30)
-    assert clock[0] >= 0.3  # Fresh dwell after teaching ON.
-    assert "teaching is OFF before capture" in caplog.text
-    assert sent and all(p == robot.config.recording_reset_pose for p in sent)
-
-
-def test_teaching_off_wait_can_cancel(tmp_path, monkeypatch):
+@pytest.mark.parametrize("changed", ["teaching_off", "moved"])
+def test_next_episode_resets_if_preparation_changed(tmp_path, monkeypatch, changed):
     from lerobot_robot_piper_x.leader_reset import TeachingModeEnded
 
     leader, robot, _, clock = setup_alignment(tmp_path, monkeypatch)
     leader.config.automatic_reset = True
     leader.config.teaching_mode_switch = "manual"
+    leader._prepared_for_capture = True
+    resets = []
+
+    def action():
+        if not resets:
+            if changed == "teaching_off":
+                raise TeachingModeEnded("off")
+            return {**robot.config.recording_reset_pose, KEYS[0]: 0.2}
+        return robot.config.recording_reset_pose.copy()
+
+    monkeypatch.setattr(leader, "_read_action", action)
+    monkeypatch.setattr("lerobot_robot_piper_x.leader_reset.reset_leader",
+                        lambda *args: resets.append(clock[0]))
+    assert leader.prepare_recording(robot, {}, 30)
+    assert len(resets) == 1
+    assert clock[0] >= leader.config.alignment_hold_s
+
+
+def test_teaching_off_during_alignment_resets_then_starts(tmp_path, monkeypatch):
+    from lerobot_robot_piper_x.leader_reset import TeachingModeEnded
+
+    leader, robot, _, _ = setup_alignment(tmp_path, monkeypatch)
+    leader.config.automatic_reset = True
+    leader.config.teaching_mode_switch = "manual"
+    resets = []
+
+    def action():
+        if not resets:
+            raise TeachingModeEnded("off")
+        return robot.config.recording_reset_pose.copy()
+
+    monkeypatch.setattr(leader, "_read_action", action)
+    monkeypatch.setattr("lerobot_robot_piper_x.leader_reset.reset_leader",
+                        lambda *args: resets.append(True))
+    assert leader.wait_for_start_alignment(robot, {}, 30)
+    assert resets == [True]
+
+
+def test_teaching_off_reset_can_cancel(tmp_path, monkeypatch):
+    from lerobot_robot_piper_x.leader_reset import TeachingModeEnded
+
+    leader, robot, _, _ = setup_alignment(tmp_path, monkeypatch)
+    leader.config.automatic_reset = True
+    leader.config.teaching_mode_switch = "manual"
     events = {}
 
     def action():
-        if clock[0] >= 0.1:
-            events["stop_recording"] = True
         raise TeachingModeEnded("off")
 
+    def reset(*args):
+        events["stop_recording"] = True
+        raise InterruptedError("cancelled")
+
     monkeypatch.setattr(leader, "_read_action", action)
+    monkeypatch.setattr("lerobot_robot_piper_x.leader_reset.reset_leader", reset)
     assert not leader.wait_for_start_alignment(robot, events, 30)
 
 
-def test_teaching_off_wait_still_times_out(tmp_path, monkeypatch):
+def test_teaching_off_reset_fault_aborts(tmp_path, monkeypatch):
     from lerobot_robot_piper_x.leader_reset import TeachingModeEnded
 
     leader, robot, _, _ = setup_alignment(tmp_path, monkeypatch)
@@ -160,8 +184,12 @@ def test_teaching_off_wait_still_times_out(tmp_path, monkeypatch):
     def action():
         raise TeachingModeEnded("off")
 
+    def reset(*args):
+        raise ConnectionError("bus fault")
+
     monkeypatch.setattr(leader, "_read_action", action)
-    with pytest.raises(TimeoutError, match="turn teaching ON"):
+    monkeypatch.setattr("lerobot_robot_piper_x.leader_reset.reset_leader", reset)
+    with pytest.raises(ConnectionError, match="bus fault"):
         leader.wait_for_start_alignment(robot, {}, 30)
 
 

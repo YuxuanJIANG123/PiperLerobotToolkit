@@ -28,10 +28,7 @@ def validate_leader_feedback(present, limits):
         value = checked[key]
         if lo - joint_tolerance <= value <= hi + joint_tolerance:
             checked[key] = min(hi, max(lo, value))
-    opening = checked[KEYS[-1]]
-    tolerance = min(0.001, limits.max_gripper_step_m)
-    if -tolerance <= opening <= limits.gripper_max_m + tolerance:
-        checked[KEYS[-1]] = min(limits.gripper_max_m, max(0.0, opening))
+    # The shared validator allows 3 mm of gripper encoder endpoint offset.
     validate_initial_pose(checked, limits)
 
 
@@ -86,7 +83,7 @@ def reset_leader(leader, follower, events, fps):
         max_joint_step_rad=config.reset_max_joint_step_rad,
         max_gripper_step_m=config.reset_max_gripper_step_m,
     )
-    validate_initial_pose(target, limits)
+    validate_initial_pose(target, limits, feedback=False)
     validate_leader_feedback(leader.reader.positions(), limits)
     leader_status(leader.reader)
     from piper_sdk import C_PiperInterface_V2

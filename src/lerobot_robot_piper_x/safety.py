@@ -4,8 +4,10 @@ import math
 
 from .protocol import GRIPPER_FACTOR, JOINT_FACTOR, KEYS
 
+GRIPPER_FEEDBACK_TOLERANCE_M = 0.01
 
-def validate_initial_pose(present, config):
+
+def validate_initial_pose(present, config, *, feedback=True):
     """Report every out-of-range axis before changing modes or enabling motors."""
     problems = []
     for i, key in enumerate(KEYS):
@@ -14,7 +16,8 @@ def validate_initial_pose(present, config):
             problems.append(f"{key}: non-finite feedback {value}")
             continue
         lo, hi = config.joint_limits_rad[i] if i < 6 else (0.0, config.gripper_max_m)
-        if not lo <= value <= hi:
+        tolerance = GRIPPER_FEEDBACK_TOLERANCE_M if feedback and i == 6 else 0.0
+        if not lo - tolerance <= value <= hi + tolerance:
             scale = 180 / math.pi if i < 6 else 1000
             unit = "deg" if i < 6 else "mm"
             problems.append(
@@ -44,6 +47,12 @@ def limit_action(action, present, config):
         else:
             lo, hi = 0, config.gripper_max_m
             delta, factor = config.max_gripper_step_m, GRIPPER_FACTOR
+            # A small encoder zero offset may exceed the normal motion step.
+            # Allow only the nearest endpoint as recovery in that case.
+            if lo - GRIPPER_FEEDBACK_TOLERANCE_M <= current < lo:
+                delta = max(delta, lo - current)
+            elif hi < current <= hi + GRIPPER_FEEDBACK_TOLERANCE_M:
+                delta = max(delta, current - hi)
         # Intersect absolute and relative limits. Never jump back into an envelope
         # if the current pose is outside it: refuse the command instead.
         low, high = max(lo, current - delta), min(hi, current + delta)

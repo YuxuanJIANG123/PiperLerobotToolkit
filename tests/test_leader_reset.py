@@ -7,6 +7,7 @@ import pytest
 from lerobot_robot_piper_x import PiperXLeader, PiperXLeaderConfig
 from lerobot_robot_piper_x.leader_reset import require_teaching, reset_leader
 from lerobot_robot_piper_x.protocol import FEEDBACK_IDS, GRIPPER_FACTOR, JOINT_FACTOR, KEYS
+from lerobot_robot_piper_x.safety import GRIPPER_FEEDBACK_TOLERANCE_M
 
 
 def simulation(tmp_path, monkeypatch, reject=None):
@@ -59,7 +60,8 @@ def simulation(tmp_path, monkeypatch, reject=None):
             assert enabled == 1 and zero == 0
             value = raw / GRIPPER_FACTOR
             assert 0 <= value <= leader.config.reset_gripper_max_m
-            assert abs(value - pose[KEYS[-1]]) <= leader.config.reset_max_gripper_step_m + 1e-12
+            assert abs(value - pose[KEYS[-1]]) <= max(leader.config.reset_max_gripper_step_m,
+                        max(0.0, -pose[KEYS[-1]], pose[KEYS[-1]] - leader.config.reset_gripper_max_m)) + 1e-12
             pose[KEYS[-1]] = value
             calls.append("gripper")
 
@@ -183,18 +185,20 @@ def test_cancel_during_return_does_not_attempt_teaching(tmp_path, monkeypatch):
     assert calls[-1] == "disconnect"
 
 
-@pytest.mark.parametrize("opening", [-0.0007, 0.0707])
+@pytest.mark.parametrize("opening", [-0.002, 0.072])
 def test_small_gripper_endpoint_offset_can_reset_with_bounded_targets(tmp_path, monkeypatch, opening):
     leader, follower, calls, _, pose, _, _ = simulation(tmp_path, monkeypatch)
     pose[KEYS[-1]] = opening
-    # Opening from 70.7 mm to 10 mm takes more than the short simulated timeout.
+    # Opening from 72 mm to 10 mm takes more than the short simulated timeout.
     leader.config.reset_timeout_s = 5
     reset_leader(leader, follower, {}, 30)
     assert "gripper" in calls
     assert leader._teaching_required
 
 
-@pytest.mark.parametrize("opening", [-0.0011, 0.0711, float("nan"), float("inf")])
+@pytest.mark.parametrize("opening", [-GRIPPER_FEEDBACK_TOLERANCE_M - 0.0001,
+                                     0.07 + GRIPPER_FEEDBACK_TOLERANCE_M + 0.0001,
+                                     float("nan"), float("inf")])
 def test_large_or_nonfinite_gripper_offset_still_refused(tmp_path, monkeypatch, opening):
     leader, follower, calls, _, pose, _, _ = simulation(tmp_path, monkeypatch)
     pose[KEYS[-1]] = opening

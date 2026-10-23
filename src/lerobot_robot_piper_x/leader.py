@@ -122,6 +122,24 @@ class PiperXLeader(Teleoperator):
 
     def prepare_recording(self, robot, events, fps):
         """Reset the motorized leader if opted in, then gate capture on alignment."""
+        if events.get("stop_recording"):
+            return False
+        if self.config.automatic_reset and self._prepared_for_capture:
+            from .leader_reset import TeachingModeEnded
+
+            # Preparation can become stale during the environment reset window.
+            # Recheck the physical pose and teaching state before reusing it.
+            try:
+                pose = self._read_action()
+                target = robot.config.recording_reset_pose
+                self._prepared_for_capture = all(
+                    math.isfinite(pose[k]) and abs(pose[k] - target[k]) <= (
+                        self.config.alignment_joint_tolerance_rad if i < 6
+                        else self.config.alignment_gripper_tolerance_m
+                    ) for i, k in enumerate(KEYS)
+                )
+            except (TeachingModeEnded, TargetFramesUnavailable):
+                self._prepared_for_capture = False
         if self.config.automatic_reset and not self._prepared_for_capture:
             from .leader_reset import reset_leader
 
@@ -166,7 +184,8 @@ class PiperXLeader(Teleoperator):
         """Hold the follower while the user manually aligns the passive leader.
 
         Called before recording starts, so waiting consumes no episode time or
-        dataset frames. This alignment phase never sends commands to the leader.
+        dataset frames. In automatic mode, teaching OFF restarts the bounded
+        leader reset before alignment resumes.
         """
         from .leader_reset import TeachingModeEnded
 
@@ -190,7 +209,6 @@ class PiperXLeader(Teleoperator):
             # Keeps all follower freshness, status and command bounds in force.
             robot.send_action(target)
             present = robot.reader.positions()
-            teaching_off = False
             try:
                 leader = self._read_action()
             except TargetFramesUnavailable:
@@ -198,8 +216,18 @@ class PiperXLeader(Teleoperator):
             except TeachingModeEnded:
                 if not (self.config.automatic_reset and self.config.teaching_mode_switch == "manual"):
                     raise
-                leader = None
-                teaching_off = True
+                from .leader_reset import reset_leader
+
+                logger.info("Teaching turned OFF before capture; returning leader to saved pose")
+                try:
+                    reset_leader(self, robot, events, fps)
+                except InterruptedError:
+                    if events.get("stop_recording"):
+                        return False
+                    raise
+                started = time.monotonic()
+                aligned_since = None
+                continue
             tolerances = {k: self.config.alignment_joint_tolerance_rad if i < 6
                           else self.config.alignment_gripper_tolerance_m for i, k in enumerate(KEYS)}
             aligned = leader is not None and all(
@@ -219,11 +247,7 @@ class PiperXLeader(Teleoperator):
             else:
                 aligned_since = None
             if now - last_log >= (1 if self.config.debug_motion else 5):
-                if teaching_off:
-                    logger.warning("ACTION: teaching is OFF before capture. Support the leader and turn "
-                                   "teaching ON; keep it near the saved pose. Recording is paused, "
-                                   "follower holds position. Press q/Esc to stop.")
-                elif leader is None:
+                if leader is None:
                     logger.warning("Waiting for fresh leader feedback; gently move the supported leader")
                 elif self.config.debug_motion:
                     logger.warning("Leader minus saved pose: joints(deg)=%s gripper(mm)=%.1f",

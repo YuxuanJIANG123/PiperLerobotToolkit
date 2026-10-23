@@ -73,8 +73,9 @@ There is no between-episode environment hold before the first episode.
 6. At **`Both arms prepared; saving episode with no extra environment hold`**,
    leave teaching ON and keep the leader near the starting pose. Do not press
    `n` again to advance; saving and the next episode proceed automatically.
-7. Wait for episode saving/video encoding and the final alignment check. Do not
-   move the leader away or toggle teaching while waiting.
+7. Wait for episode saving/video encoding and the final alignment check. If
+   teaching is turned OFF or the leader has moved outside the starting tolerance,
+   the leader resets again before capture. Follow the OFF/reset/ON prompts.
 8. At **`Recording episode 1`**, begin your second demonstration. Repeat this
    sequence for subsequent episodes.
 
@@ -92,7 +93,7 @@ for saving to finish; do not assume an episode is on disk immediately after `n`.
 | `checking start alignment` / `Waiting for start alignment` | Keep the leader and gripper near the saved pose; capture has not started. |
 | `preparation complete` | Keep the leader near its starting pose; wait for the episode message. |
 | `saving episode with no extra environment hold` | Leave teaching ON and hold the starting pose during saving. No extra `n` is needed. |
-| `teaching is OFF before capture` | Support the leader, turn teaching ON, and wait for alignment. Do not press `n` to bypass this check. |
+| `Teaching turned OFF before capture` | The leader returns to the saved pose again. Keep clear during reset, then turn teaching ON when prompted. |
 | `Recording episode ...` | Begin the demonstration. |
 
 ## 5. Retry or stop
