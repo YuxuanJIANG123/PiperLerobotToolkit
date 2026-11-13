@@ -4,22 +4,51 @@ Joint-position teleoperation and demonstration recording for two AgileX Piper-X
 arms with LeRobot. A hand-guided leader controls the follower's six joints and
 gripper directly, using radians and metres.
 
+For OpenPI π₀.₅ deployment, see the [remote inference guide](REMOTE_INFERENCE.md).
+The RTX 4090 hosts the policy, D70 runs the robot client, and Superpod is
+available as a backup.
+
 ## 1. Environment setup
 
-Requires Linux with SocketCAN, two USB-CAN adapters, Python 3.12, and
+Requires Linux with SocketCAN, two USB-CAN adapters, a C compiler and Linux input
+headers (`build-essential` and `linux-libc-dev` on Ubuntu), and
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
 Recording also requires a wrist Intel RealSense camera.
 
 ```bash
 git clone https://github.com/YuxuanJIANG123/PiperLerobotToolkit.git
 cd PiperLerobotToolkit
-bash scripts/setup.sh
+uv venv --managed-python --python 3.12 .venv
 source .venv/bin/activate
+bash scripts/setup.sh
 ```
 
-Setup installs the pinned LeRobot revision, `piper-sdk==0.6.2`, and this adapter,
-then applies the local teleoperation and recording patches. Run commands below
-from the project directory with the environment activated.
+Setup applies the local teleoperation and recording patches and installs the
+pinned LeRobot revision, `piper-sdk==0.6.2`, and this adapter. Run the commands
+below from the project directory with the environment activated.
+
+### Recover from a failed `evdev` build
+
+On Ubuntu, install the compiler and Linux input headers if the build reports
+`gcc` or `linux/input.h` missing, then rerun setup.
+
+```bash
+sudo apt update && sudo apt install build-essential linux-libc-dev &&
+  bash scripts/setup.sh
+```
+
+If the build reports `Python.h` missing, open a fresh shell in the project
+directory. Download uv-managed Python 3.12, back up the existing environment,
+and rebuild it.
+
+```bash
+uv python install --no-bin 3.12 &&
+  backup_dir=$(mktemp -d .venv.backup.XXXXXX) &&
+  mv .venv "$backup_dir/" &&
+  uv venv --managed-python --python 3.12 .venv &&
+  source .venv/bin/activate &&
+  bash scripts/setup.sh
+```
 
 ### Configure CAN names once
 
@@ -50,13 +79,43 @@ ip -details link show type can
 
 ### Bring up CAN after each reboot or reconnection
 
+Check the current state with `ip -details link show type can`. Run the matching
+command below for each interface that is down.
+
 ```bash
 sudo ip link set piper_follower up type can bitrate 1000000
 sudo ip link set piper_leader up type can bitrate 1000000
 ```
 
-If either name is missing, check the adapter serials and naming rules above.
-Optionally verify arm feedback without sending motion commands:
+If setting the bitrate returns `Device or resource busy` and the interface
+already shows `UP` with `bitrate 1000000`, leave it running.
+
+#### Recover a missing `piper_leader` interface
+
+If the command reports `Cannot find device "piper_leader"` and the CAN link
+listing shows an unnamed adapter such as `can0`, check its serial.
+
+```bash
+udevadm info --query=property --path=/sys/class/net/can0 | grep '^ID_SERIAL_SHORT='
+```
+
+If the serial matches the `piper_leader` rule and `can0` is down, rename and
+bring up that interface. Substitute the actual interface name if it differs.
+
+```bash
+sudo ip link set dev can0 name piper_leader
+sudo ip link set dev piper_leader up type can bitrate 1000000
+```
+
+The manual rename lasts until the adapter disconnects or the machine reboots.
+To apply the installed udev rule, stop the controllers, run
+`sudo udevadm control --reload-rules`, and unplug and reconnect the leader's USB
+adapter. Check that it appears as `piper_leader`, then bring it up again.
+
+#### Verify arm feedback
+
+Use `piper-inspect` to check for joint feedback without sending motion commands.
+An output containing `positions_rad_m` confirms that joint feedback was received.
 
 ```bash
 piper-inspect --channel piper_leader --source feedback --seconds 3
@@ -131,9 +190,22 @@ Wait for saving to finish. Prefer `q` to Ctrl+C when saving matters. There is no
 automatic return after the final episode or on quit. See
 [RECORDING_STEPS.md](RECORDING_STEPS.md) for detailed prompts and recovery guidance.
 
+### Diagnose a leader return timeout
+
+If the recorder reports `Leader return to saved pose timed out`, check that the
+saved pose is reachable and both arm paths are clear. To log the remaining joint
+and gripper errors during the return, run recording with leader motion logging.
+The timeout override restores the 60-second return window if you shortened it
+in your local configuration. This command enables motor power.
+
+```bash
+lerobot-record --config_path=configs/record.yaml --robot.enable_motors=true \
+  --teleop.debug_motion=true --teleop.reset_timeout_s=60.0
+```
+
 ### Dataset settings and resume
 
-Defaults: **10 episodes × 30 seconds, 30 FPS, wrist camera only, no Hub upload**.
+Defaults: **100 episodes × 30 seconds, 30 FPS, wrist camera only, no Hub upload**.
 Reset movement is excluded from capture; there is no extra environment hold.
 New runs use matching timestamped IDs and folders:
 
